@@ -1,0 +1,12 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: linear-gradient(120deg, #ff0844 0%, #ffb199 30%, #ffcd3c 60%, #ff6b35 100%);
+  background-size: 300% 300%;
+  animation: gradientShift 12s ease infinite;
+}
+
