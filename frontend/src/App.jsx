@@ -12,13 +12,13 @@ const CHAT_SESSIONS_STORAGE_KEY = 'viper.chatSessions';
 const CHAT_STATE_STORAGE_KEY_V2 = 'viper.chatState.v2';
 
 const DEFAULT_MODELS = [
-  { name: 'GPT-4', apiBaseUrl: '', source: 'built-in', provider: 'openai', type: 'chat.completions', modelId: 'gpt-4', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
-  { name: 'GPT-4-Turbo', apiBaseUrl: '', source: 'built-in', provider: 'openai', type: 'chat.completions', modelId: 'gpt-4-turbo', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
-  { name: 'GPT-3.5-Turbo', apiBaseUrl: '', source: 'built-in', provider: 'openai', type: 'chat.completions', modelId: 'gpt-3.5-turbo', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
-  { name: 'Claude-3-Opus', apiBaseUrl: '', source: 'built-in', provider: 'anthropic', type: 'chat.completions', modelId: 'claude-3-opus', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
-  { name: 'Claude-3-Sonnet', apiBaseUrl: '', source: 'built-in', provider: 'anthropic', type: 'chat.completions', modelId: 'claude-3-sonnet', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
-  { name: 'llama-2-70b', apiBaseUrl: '', source: 'built-in', provider: 'openai', type: 'chat.completions', modelId: 'llama-2-70b', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
-  { name: 'Mistral-Large', apiBaseUrl: '', source: 'built-in', provider: 'openai', type: 'chat.completions', modelId: 'mistral-large', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
+  { name: 'GPT-4', apiBaseUrl: '', source: 'built-in', type: 'chat.completions', modelId: 'gpt-4', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
+  { name: 'GPT-4-Turbo', apiBaseUrl: '', source: 'built-in', type: 'chat.completions', modelId: 'gpt-4-turbo', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
+  { name: 'GPT-3.5-Turbo', apiBaseUrl: '', source: 'built-in', type: 'chat.completions', modelId: 'gpt-3.5-turbo', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
+  { name: 'Claude-3-Opus', apiBaseUrl: '', source: 'built-in', type: 'chat.completions', modelId: 'claude-3-opus', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
+  { name: 'Claude-3-Sonnet', apiBaseUrl: '', source: 'built-in', type: 'chat.completions', modelId: 'claude-3-sonnet', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
+  { name: 'llama-2-70b', apiBaseUrl: '', source: 'built-in', type: 'chat.completions', modelId: 'llama-2-70b', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
+  { name: 'Mistral-Large', apiBaseUrl: '', source: 'built-in', type: 'chat.completions', modelId: 'mistral-large', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
 ];
 
 function safeJsonParse(raw) {
@@ -41,6 +41,14 @@ function createId() {
 function clampNumber(n, { min, max, fallback }) {
   const value = Number(n);
   if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizeOptionalNumber(raw, { min, max }) {
+  if (raw == null) return undefined;
+  if (typeof raw === 'string' && raw.trim().length === 0) return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return undefined;
   return Math.min(max, Math.max(min, value));
 }
 
@@ -77,14 +85,13 @@ function parseStoredModels(raw) {
       const name = typeof m.name === 'string' ? m.name.trim() : '';
       const apiBaseUrl = typeof m.apiBaseUrl === 'string' ? m.apiBaseUrl.trim() : '';
       const source = typeof m.source === 'string' ? m.source : 'custom';
-      const provider = typeof m.provider === 'string' ? m.provider.trim() : 'openai';
       const type = typeof m.type === 'string' ? m.type.trim() : 'chat.completions';
       const modelId = typeof m.modelId === 'string' ? m.modelId.trim() : '';
       const apiKey = typeof m.apiKey === 'string' ? m.apiKey : '';
       const headers = typeof m.headers === 'string' ? m.headers : '';
-      const temperature = clampNumber(m.temperature, { min: 0, max: 2, fallback: 1 });
-      const maxTokens = clampNumber(m.maxTokens, { min: 1, max: 200000, fallback: 1024 });
-      return { name, apiBaseUrl, source, provider, type, modelId, apiKey, headers, temperature, maxTokens };
+      const temperature = m.temperature == null ? undefined : normalizeOptionalNumber(m.temperature, { min: 0, max: 2 });
+      const maxTokens = m.maxTokens == null ? undefined : normalizeOptionalNumber(m.maxTokens, { min: 1, max: 200000 });
+      return { name, apiBaseUrl, source, type, modelId, apiKey, headers, temperature, maxTokens };
     })
     .filter((m) => m.name.length > 0);
 
@@ -258,6 +265,25 @@ function getOpenAiDeltaContent(payload) {
   return '';
 }
 
+function estimateTokenCount(text) {
+  const t = typeof text === 'string' ? text : '';
+  if (!t) return 0;
+  const cjkMatches = t.match(/[\u3400-\u9FFF]/g);
+  const cjk = cjkMatches ? cjkMatches.length : 0;
+  const nonCjk = t.replace(/[\u3400-\u9FFF]/g, '').length;
+  return cjk + Math.ceil(nonCjk / 4);
+}
+
+function estimateContextTokens(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return 0;
+  let total = 0;
+  for (const m of messages) {
+    total += 4;
+    total += estimateTokenCount(m?.content ?? '');
+  }
+  return total;
+}
+
 async function streamOpenAiSse(response, { onDelta, signal }) {
   const reader = response.body?.getReader?.();
   if (!reader) {
@@ -308,25 +334,23 @@ function App() {
   const [isAddModelOpen, setIsAddModelOpen] = useState(false);
   const [newModelName, setNewModelName] = useState('');
   const [newModelApiBaseUrl, setNewModelApiBaseUrl] = useState('');
-  const [newModelProvider, setNewModelProvider] = useState('openai');
   const [newModelType, setNewModelType] = useState('chat.completions');
   const [newModelId, setNewModelId] = useState('');
   const [newModelApiKey, setNewModelApiKey] = useState('');
   const [newModelHeaders, setNewModelHeaders] = useState('');
-  const [newModelTemperature, setNewModelTemperature] = useState(1);
-  const [newModelMaxTokens, setNewModelMaxTokens] = useState(1024);
+  const [newModelTemperature, setNewModelTemperature] = useState('');
+  const [newModelMaxTokens, setNewModelMaxTokens] = useState('');
   const [addModelError, setAddModelError] = useState('');
   const [isEditModelOpen, setIsEditModelOpen] = useState(false);
   const [editModelOriginalName, setEditModelOriginalName] = useState('');
   const [editModelName, setEditModelName] = useState('');
   const [editModelApiBaseUrl, setEditModelApiBaseUrl] = useState('');
-  const [editModelProvider, setEditModelProvider] = useState('openai');
   const [editModelType, setEditModelType] = useState('chat.completions');
   const [editModelId, setEditModelId] = useState('');
   const [editModelApiKey, setEditModelApiKey] = useState('');
   const [editModelHeaders, setEditModelHeaders] = useState('');
-  const [editModelTemperature, setEditModelTemperature] = useState(1);
-  const [editModelMaxTokens, setEditModelMaxTokens] = useState(1024);
+  const [editModelTemperature, setEditModelTemperature] = useState('');
+  const [editModelMaxTokens, setEditModelMaxTokens] = useState('');
   const [editModelError, setEditModelError] = useState('');
   const [confirmPopover, setConfirmPopover] = useState(null);
   const [isRenamingChat, setIsRenamingChat] = useState(false);
@@ -343,6 +367,15 @@ function App() {
   const lastMessageContent = useMemo(() => messages[messages.length - 1]?.content ?? '', [messages]);
   const isGenerating = requestState.status === 'sending' || requestState.status === 'streaming';
   const selectedModelConfig = useMemo(() => models.find((m) => m.name === selectedModel) ?? null, [models, selectedModel]);
+  const contextTokens = useMemo(() => estimateContextTokens(messages), [messages]);
+  const contextBudget = useMemo(
+    () => clampNumber(selectedModelConfig?.maxTokens, { min: 1, max: 200000, fallback: 1024 }),
+    [selectedModelConfig?.maxTokens],
+  );
+  const contextPercent = useMemo(() => {
+    if (!contextBudget) return 0;
+    return Math.min(100, Math.max(0, (contextTokens / contextBudget) * 100));
+  }, [contextTokens, contextBudget]);
 
   // Auto-adjust textarea height (only expand beyond 4 rows when needed)
   useEffect(() => {
@@ -593,13 +626,12 @@ function App() {
     setAddModelError('');
     setNewModelName('');
     setNewModelApiBaseUrl('');
-    setNewModelProvider('openai');
     setNewModelType('chat.completions');
     setNewModelId('');
     setNewModelApiKey('');
     setNewModelHeaders('');
-    setNewModelTemperature(1);
-    setNewModelMaxTokens(1024);
+    setNewModelTemperature('');
+    setNewModelMaxTokens('');
     setIsAddModelOpen(true);
   };
 
@@ -610,13 +642,12 @@ function App() {
   const saveNewModel = () => {
     const name = newModelName.trim();
     const apiBaseUrl = newModelApiBaseUrl.trim();
-    const provider = newModelProvider.trim();
     const type = newModelType.trim();
     const modelId = newModelId.trim();
     const apiKey = newModelApiKey;
     const headers = newModelHeaders;
-    const temperature = clampNumber(newModelTemperature, { min: 0, max: 2, fallback: 1 });
-    const maxTokens = clampNumber(newModelMaxTokens, { min: 1, max: 200000, fallback: 1024 });
+    const temperature = normalizeOptionalNumber(newModelTemperature, { min: 0, max: 2 });
+    const maxTokens = normalizeOptionalNumber(newModelMaxTokens, { min: 1, max: 200000 });
 
     if (!name || !apiBaseUrl) {
       setAddModelError('Model name and API endpoint are required.');
@@ -635,7 +666,7 @@ function App() {
       return;
     }
 
-    setModels((prev) => [...prev, { name, apiBaseUrl, source: 'custom', provider, type, modelId, apiKey, headers, temperature, maxTokens }]);
+    setModels((prev) => [...prev, { name, apiBaseUrl, source: 'custom', type, modelId, apiKey, headers, temperature, maxTokens }]);
     setIsAddModelOpen(false);
   };
 
@@ -644,13 +675,12 @@ function App() {
     setEditModelOriginalName(model.name);
     setEditModelName(model.name);
     setEditModelApiBaseUrl(model.apiBaseUrl ?? '');
-    setEditModelProvider(model.provider ?? 'openai');
     setEditModelType(model.type ?? 'chat.completions');
     setEditModelId(model.modelId ?? '');
     setEditModelApiKey(model.apiKey ?? '');
     setEditModelHeaders(model.headers ?? '');
-    setEditModelTemperature(clampNumber(model.temperature, { min: 0, max: 2, fallback: 1 }));
-    setEditModelMaxTokens(clampNumber(model.maxTokens, { min: 1, max: 200000, fallback: 1024 }));
+    setEditModelTemperature(model.temperature == null ? '' : String(clampNumber(model.temperature, { min: 0, max: 2, fallback: 1 })));
+    setEditModelMaxTokens(model.maxTokens == null ? '' : String(clampNumber(model.maxTokens, { min: 1, max: 200000, fallback: 1024 })));
     setIsEditModelOpen(true);
   };
 
@@ -663,13 +693,12 @@ function App() {
     const originalName = editModelOriginalName;
     const name = editModelName.trim();
     const apiBaseUrl = editModelApiBaseUrl.trim();
-    const provider = editModelProvider.trim();
     const type = editModelType.trim();
     const modelId = editModelId.trim();
     const apiKey = editModelApiKey;
     const headers = editModelHeaders;
-    const temperature = clampNumber(editModelTemperature, { min: 0, max: 2, fallback: 1 });
-    const maxTokens = clampNumber(editModelMaxTokens, { min: 1, max: 200000, fallback: 1024 });
+    const temperature = normalizeOptionalNumber(editModelTemperature, { min: 0, max: 2 });
+    const maxTokens = normalizeOptionalNumber(editModelMaxTokens, { min: 1, max: 200000 });
 
     if (!name || !apiBaseUrl) {
       setEditModelError('Model name and API endpoint are required.');
@@ -690,7 +719,7 @@ function App() {
       return;
     }
 
-    setModels((prev) => prev.map((m) => (m.name === originalName ? { ...m, name, apiBaseUrl, provider, type, modelId, apiKey, headers, temperature, maxTokens } : m)));
+    setModels((prev) => prev.map((m) => (m.name === originalName ? { ...m, name, apiBaseUrl, type, modelId, apiKey, headers, temperature, maxTokens } : m)));
 
     if (selectedModel === originalName) setSelectedModel(name);
     setIsEditModelOpen(false);
@@ -956,6 +985,12 @@ function App() {
                   </div>
                 )}
               </div>
+              <div className="context-meter" title={`Context tokens (estimate): ${contextTokens}/${contextBudget}`}>
+                <div className="context-meter-bar" aria-hidden="true">
+                  <div className="context-meter-fill" style={{ width: `${contextPercent}%` }}></div>
+                </div>
+                <div className="context-meter-text">{contextTokens}/{contextBudget}</div>
+              </div>
             </div>
 
             {/* Messages Area */}
@@ -1168,19 +1203,6 @@ function App() {
               </label>
 
               <label className="modal-label">
-                <span>Provider</span>
-                <input
-                  className="modal-input"
-                  value={newModelProvider}
-                  onChange={(e) => {
-                    setAddModelError('');
-                    setNewModelProvider(e.target.value);
-                  }}
-                  placeholder="e.g. openai / anthropic"
-                />
-              </label>
-
-              <label className="modal-label">
                 <span>Type</span>
                 <input
                   className="modal-input"
@@ -1229,7 +1251,7 @@ function App() {
                     setNewModelHeaders(e.target.value);
                   }}
                   placeholder={'{"x-custom-header":"value"}'}
-                  rows={4}
+                  rows={2}
                 />
               </label>
 
@@ -1244,6 +1266,7 @@ function App() {
                     setAddModelError('');
                     setNewModelTemperature(e.target.value);
                   }}
+                  placeholder="Optional"
                 />
               </label>
 
@@ -1258,6 +1281,7 @@ function App() {
                     setAddModelError('');
                     setNewModelMaxTokens(e.target.value);
                   }}
+                  placeholder="Optional"
                 />
               </label>
 
@@ -1319,19 +1343,6 @@ function App() {
               </label>
 
               <label className="modal-label">
-                <span>Provider</span>
-                <input
-                  className="modal-input"
-                  value={editModelProvider}
-                  onChange={(e) => {
-                    setEditModelError('');
-                    setEditModelProvider(e.target.value);
-                  }}
-                  placeholder="e.g. openai / anthropic"
-                />
-              </label>
-
-              <label className="modal-label">
                 <span>Type</span>
                 <input
                   className="modal-input"
@@ -1380,7 +1391,7 @@ function App() {
                     setEditModelHeaders(e.target.value);
                   }}
                   placeholder={'{"x-custom-header":"value"}'}
-                  rows={4}
+                  rows={2}
                 />
               </label>
 
@@ -1395,6 +1406,7 @@ function App() {
                     setEditModelError('');
                     setEditModelTemperature(e.target.value);
                   }}
+                  placeholder="Optional"
                 />
               </label>
 
@@ -1409,6 +1421,7 @@ function App() {
                     setEditModelError('');
                     setEditModelMaxTokens(e.target.value);
                   }}
+                  placeholder="Optional"
                 />
               </label>
 

@@ -333,6 +333,8 @@
 .chat-title-bar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .current-chat-card {
@@ -341,6 +343,35 @@
   border: 1px solid #3a3a3a;
   border-radius: 10px;
   min-width: 200px;
+}
+
+.context-meter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.context-meter-bar {
+  width: 140px;
+  height: 8px;
+  border-radius: 999px;
+  background-color: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.context-meter-fill {
+  height: 100%;
+  background: linear-gradient(135deg, #ffffff 0%, #bdbdbd 100%);
+}
+
+.context-meter-text {
+  font-size: 12px;
+  color: #bdbdbd;
+  font-weight: 650;
+  min-width: 88px;
+  text-align: right;
 }
 
 .current-chat-card .chat-title {
@@ -530,7 +561,7 @@
 
 .modal-textarea {
   resize: vertical;
-  min-height: 110px;
+  min-height: 64px;
 }
 
 /* Input Area */
@@ -968,11 +999,14 @@
 .modal-card {
   width: 100%;
   max-width: 520px;
+  max-height: 90vh;
   background: linear-gradient(135deg, #2d2d2d 0%, #252525 100%);
   border: 1px solid #3a3a3a;
   border-radius: 14px;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .modal-header {
@@ -993,6 +1027,8 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  overflow: auto;
+  flex: 1;
 }
 
 .modal-label {
@@ -1013,6 +1049,17 @@
   color: #e0e0e0;
   outline: none;
   font-size: 14px;
+}
+
+.modal-input[type='number'] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.modal-input[type='number']::-webkit-outer-spin-button,
+.modal-input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .modal-input:focus {
