@@ -244,6 +244,111 @@ async function fetchWithTimeout(url, init, { timeoutMs }) {
   }
 }
 
+function getEnvString(key) {
+  try {
+    const value = import.meta?.env?.[key];
+    return typeof value === 'string' ? value : '';
+  } catch {
+    return '';
+  }
+}
+
+function getApiBaseUrl() {
+  return getEnvString('VITE_API_BASE_URL').trim();
+}
+
+function normalizeChatSession(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = Number.isFinite(Number(raw.id)) ? Number(raw.id) : null;
+  const title = typeof raw.title === 'string' ? raw.title.trim() : '';
+  const timestamp = raw.timestamp ? new Date(raw.timestamp) : null;
+  if (!id || !title || !timestamp || Number.isNaN(timestamp.getTime())) return null;
+  return { id, title, timestamp };
+}
+
+function normalizeModelConfig(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = raw.id == null ? undefined : Number.isFinite(Number(raw.id)) ? Number(raw.id) : undefined;
+  const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+  const apiBaseUrl = typeof raw.apiBaseUrl === 'string' ? raw.apiBaseUrl.trim() : '';
+  const source = typeof raw.source === 'string' ? raw.source : 'custom';
+  const type = typeof raw.type === 'string' ? raw.type.trim() : 'chat.completions';
+  const modelId = typeof raw.modelId === 'string' ? raw.modelId.trim() : '';
+  const apiKey = typeof raw.apiKey === 'string' ? raw.apiKey : '';
+  const headers = typeof raw.headers === 'string' ? raw.headers : '';
+  const temperature = raw.temperature == null ? undefined : normalizeOptionalNumber(raw.temperature, { min: 0, max: 2 });
+  const maxTokens = raw.maxTokens == null ? undefined : normalizeOptionalNumber(raw.maxTokens, { min: 1, max: 200000 });
+  if (!name) return null;
+  return { id, name, apiBaseUrl, source, type, modelId, apiKey, headers, temperature, maxTokens };
+}
+
+async function apiRequest(baseUrl, path, init, { timeoutMs } = {}) {
+  const url = joinUrl(baseUrl, path);
+  return fetchWithTimeout(url, init, { timeoutMs: timeoutMs ?? 60000 });
+}
+
+async function apiJson(baseUrl, path, init, { timeoutMs } = {}) {
+  const response = await apiRequest(baseUrl, path, init, { timeoutMs });
+  if (!response.ok) {
+    let detail = '';
+    try {
+      detail = await response.text();
+    } catch {
+      void 0;
+    }
+    throw new Error(`HTTP ${response.status} ${response.statusText}${detail ? `: ${detail}` : ''}`);
+  }
+  if (response.status === 204) return null;
+  let text = '';
+  try {
+    text = await response.text();
+  } catch {
+    return null;
+  }
+  if (!text) return null;
+  return safeJsonParse(text) ?? text;
+}
+
+function unwrapItems(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (payload && typeof payload === 'object' && Array.isArray(payload.items)) return payload.items;
+  return null;
+}
+
+async function loadRemoteBootstrap(baseUrl) {
+  const bootstrap = await apiJson(baseUrl, '/api/bootstrap', { method: 'GET' }, { timeoutMs: 30000 });
+  const modelsRaw = unwrapItems(bootstrap?.models) ?? unwrapItems(bootstrap?.modelConfigs) ?? unwrapItems(bootstrap) ?? [];
+  const sessionsRaw = unwrapItems(bootstrap?.chats) ?? unwrapItems(bootstrap?.chatSessions) ?? [];
+  const models = modelsRaw.map(normalizeModelConfig).filter(Boolean);
+  const sessions = sessionsRaw.map(normalizeChatSession).filter(Boolean);
+  const selectedModel = typeof bootstrap?.selectedModel === 'string' ? bootstrap.selectedModel : typeof bootstrap?.selectedModelName === 'string' ? bootstrap.selectedModelName : '';
+  const currentChatId = Number.isFinite(Number(bootstrap?.currentChatId)) ? Number(bootstrap.currentChatId) : (sessions[0]?.id ?? 1);
+  const messagesByChatIdRaw = bootstrap?.messagesByChatId && typeof bootstrap.messagesByChatId === 'object' ? bootstrap.messagesByChatId : null;
+  const messagesByChatId = {};
+  if (messagesByChatIdRaw) {
+    for (const session of sessions) {
+      const rawMessages = messagesByChatIdRaw[String(session.id)];
+      if (!Array.isArray(rawMessages)) {
+        messagesByChatId[session.id] = [];
+        continue;
+      }
+      messagesByChatId[session.id] = rawMessages
+        .filter((m) => m && typeof m === 'object')
+        .map((m) => ({
+          id: typeof m.id === 'string' && m.id.trim().length > 0 ? m.id : createId(),
+          role: m.role === 'assistant' ? 'assistant' : 'user',
+          content: typeof m.content === 'string' ? m.content : '',
+          createdAt: typeof m.createdAt === 'string' && m.createdAt ? m.createdAt : new Date().toISOString(),
+          status: typeof m.status === 'string' ? m.status : 'sent',
+          error: typeof m.error === 'string' ? m.error : '',
+        }));
+    }
+  } else {
+    for (const session of sessions) messagesByChatId[session.id] = [];
+  }
+  return { models, sessions, selectedModel, currentChatId, messagesByChatId };
+}
+
 function extractReadableError(err) {
   if (!err) return 'Unknown error';
   if (typeof err === 'string') return err;
@@ -323,6 +428,9 @@ async function streamOpenAiSse(response, { onDelta, signal }) {
 
 function App() {
   const [inputValue, setInputValue] = useState('');
+  const apiBaseUrl = useMemo(() => getApiBaseUrl(), []);
+  const [storageMode, setStorageMode] = useState('local');
+  const [dataError, setDataError] = useState('');
   const initialChatState = useMemo(() => getInitialChatState(), []);
   const [chatSessions, setChatSessions] = useState(() => initialChatState.sessions);
   const [messagesByChatId, setMessagesByChatId] = useState(() => initialChatState.messagesByChatId);
@@ -360,6 +468,8 @@ function App() {
   const textareaRef = useRef(null);
   const modelSelectorRef = useRef(null);
   const messagesAreaRef = useRef(null);
+  const loadedChatIdsRef = useRef(new Set());
+  const remoteReadyRef = useRef(false);
   const activeRequestRef = useRef({ controller: null, chatId: null, assistantMessageId: null });
 
   const currentChatTitle = chatSessions.find((c) => c.id === currentChatId)?.title ?? 'New Chat';
@@ -367,6 +477,7 @@ function App() {
   const lastMessageContent = useMemo(() => messages[messages.length - 1]?.content ?? '', [messages]);
   const isGenerating = requestState.status === 'sending' || requestState.status === 'streaming';
   const selectedModelConfig = useMemo(() => models.find((m) => m.name === selectedModel) ?? null, [models, selectedModel]);
+  const isRemote = storageMode === 'remote';
   const contextTokens = useMemo(() => estimateContextTokens(messages), [messages]);
   const contextBudget = useMemo(
     () => clampNumber(selectedModelConfig?.maxTokens, { min: 1, max: 200000, fallback: 1024 }),
@@ -395,20 +506,22 @@ function App() {
   }, [inputValue]);
 
   useEffect(() => {
+    if (storageMode !== 'local') return;
     try {
       localStorage.setItem(MODELS_STORAGE_KEY, JSON.stringify(models));
     } catch (error) {
       void error;
     }
-  }, [models]);
+  }, [models, storageMode]);
 
   useEffect(() => {
+    if (storageMode !== 'local') return;
     try {
       localStorage.setItem(SELECTED_MODEL_STORAGE_KEY, selectedModel);
     } catch (error) {
       void error;
     }
-  }, [selectedModel]);
+  }, [selectedModel, storageMode]);
 
   useEffect(() => {
     if (!showModelDropdown) return;
@@ -422,6 +535,7 @@ function App() {
   }, [showModelDropdown]);
 
   useEffect(() => {
+    if (storageMode !== 'local') return;
     try {
       const serializable = {
         sessions: chatSessions.map((c) => ({ ...c, timestamp: c.timestamp.toISOString() })),
@@ -432,7 +546,95 @@ function App() {
     } catch (error) {
       void error;
     }
-  }, [chatSessions, messagesByChatId, currentChatId]);
+  }, [chatSessions, messagesByChatId, currentChatId, storageMode]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const next = await loadRemoteBootstrap(apiBaseUrl);
+        if (cancelled) return;
+        if (next.models.length > 0) setModels(next.models);
+        const nextSelected = next.selectedModel && next.models.some((m) => m.name === next.selectedModel)
+          ? next.selectedModel
+          : next.models[0]?.name ?? '';
+        if (nextSelected) setSelectedModel(nextSelected);
+        if (next.sessions.length > 0) setChatSessions(next.sessions);
+        setMessagesByChatId(next.messagesByChatId);
+        setCurrentChatId(next.currentChatId);
+        loadedChatIdsRef.current = new Set(Object.keys(next.messagesByChatId ?? {}).map((k) => Number(k)).filter((n) => Number.isFinite(n)));
+        remoteReadyRef.current = true;
+        setStorageMode('remote');
+        setDataError('');
+      } catch (err) {
+        if (cancelled) return;
+        setDataError(extractReadableError(err));
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
+    if (!isRemote) return;
+    const chatId = currentChatId;
+    if (!chatId) return;
+    if (loadedChatIdsRef.current.has(chatId)) return;
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const payload = await apiJson(apiBaseUrl, `/api/chats/${chatId}/messages`, { method: 'GET' }, { timeoutMs: 30000 });
+        const items = unwrapItems(payload) ?? [];
+        const messages = items
+          .filter((m) => m && typeof m === 'object')
+          .map((m) => ({
+            id: typeof m.id === 'string' && m.id.trim().length > 0 ? m.id : createId(),
+            role: m.role === 'assistant' ? 'assistant' : 'user',
+            content: typeof m.content === 'string' ? m.content : '',
+            createdAt: typeof m.createdAt === 'string' && m.createdAt ? m.createdAt : new Date().toISOString(),
+            status: typeof m.status === 'string' ? m.status : 'sent',
+            error: typeof m.error === 'string' ? m.error : '',
+          }));
+        if (cancelled) return;
+        loadedChatIdsRef.current.add(chatId);
+        setMessagesByChatId((prev) => ({ ...prev, [chatId]: messages }));
+      } catch (err) {
+        if (cancelled) return;
+        setDataError(extractReadableError(err));
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBaseUrl, currentChatId, isRemote]);
+
+  useEffect(() => {
+    if (!isRemote) return;
+    if (!remoteReadyRef.current) return;
+    const model = models.find((m) => m.name === selectedModel) ?? null;
+    if (!model) return;
+    let cancelled = false;
+    const run = async () => {
+      try {
+        await apiJson(
+          apiBaseUrl,
+          '/api/models/selected',
+          { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: model.name, id: model.id }) },
+          { timeoutMs: 30000 },
+        );
+      } catch (err) {
+        if (cancelled) return;
+        setDataError(extractReadableError(err));
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBaseUrl, isRemote, models, selectedModel]);
 
   useEffect(() => {
     if (!confirmPopover) return;
@@ -500,6 +702,9 @@ function App() {
     activeRequestRef.current = { controller, chatId, assistantMessageId };
     setRequestState({ status: 'sending', error: '' });
 
+    const existingAssistant = (messagesByChatId[chatId] ?? []).find((m) => m.id === assistantMessageId) ?? null;
+    let assistantContent = typeof existingAssistant?.content === 'string' ? existingAssistant.content : '';
+
     const baseVisible = (messagesByChatId[chatId] ?? []).map((m) => ({ id: m.id, role: m.role, content: m.content }));
     const visibleFromState = mode === 'continue'
       ? baseVisible
@@ -516,6 +721,7 @@ function App() {
       stream: true,
       temperature: clampNumber(model.temperature, { min: 0, max: 2, fallback: 1 }),
       max_tokens: clampNumber(model.maxTokens, { min: 1, max: 200000, fallback: 1024 }),
+      viper: { chat_id: chatId, assistant_message_id: assistantMessageId, mode },
     };
 
     const url = joinUrl(baseUrl, '/chat/completions');
@@ -552,6 +758,7 @@ function App() {
     await streamOpenAiSse(response, {
       signal: controller.signal,
       onDelta: (delta) => {
+        assistantContent = `${assistantContent}${delta}`;
         updateMessagesForChat(chatId, (prev) =>
           prev.map((m) => (m.id === assistantMessageId ? { ...m, content: `${m.content}${delta}`, status: 'streaming', error: '' } : m)),
         );
@@ -562,6 +769,22 @@ function App() {
       prev.map((m) => (m.id === assistantMessageId ? { ...m, status: 'sent', error: '' } : m)),
     );
     updateChatSession(chatId, (s) => ({ ...s, timestamp: new Date() }));
+    if (isRemote) {
+      try {
+        await apiJson(
+          apiBaseUrl,
+          `/api/chats/${chatId}/messages/${encodeURIComponent(assistantMessageId)}`,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: assistantContent, status: 'sent', error: '' }),
+          },
+          { timeoutMs: 30000 },
+        );
+      } catch (error) {
+        void error;
+      }
+    }
     setRequestState({ status: 'idle', error: '' });
     activeRequestRef.current = { controller: null, chatId: null, assistantMessageId: null };
   };
@@ -572,7 +795,25 @@ function App() {
     const text = inputValue.trim();
     if (!text) return;
 
-    const chatId = ensureChatExists();
+    const ensureRemoteChatExists = async () => {
+      const exists = chatSessions.some((c) => c.id === currentChatId);
+      if (exists) return currentChatId;
+      const created = await apiJson(
+        apiBaseUrl,
+        '/api/chats',
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'New Chat' }) },
+        { timeoutMs: 30000 },
+      );
+      const session = normalizeChatSession(created) ?? normalizeChatSession(created?.item) ?? null;
+      if (!session) throw new Error('Failed to create chat');
+      setChatSessions((prev) => [session, ...prev]);
+      setMessagesByChatId((prev) => ({ ...prev, [session.id]: [] }));
+      loadedChatIdsRef.current.add(session.id);
+      setCurrentChatId(session.id);
+      return session.id;
+    };
+
+    const chatId = isRemote ? await ensureRemoteChatExists() : ensureChatExists();
     const existingMessages = messagesByChatId[chatId] ?? [];
     const userMessage = { id: createId(), role: 'user', content: text, createdAt: new Date().toISOString(), status: 'sent', error: '' };
     const assistantId = createId();
@@ -584,8 +825,38 @@ function App() {
     if (existingMessages.filter((m) => m.role === 'user').length === 0) {
       const nextTitle = buildChatTitleFromText(text);
       updateChatSession(chatId, (s) => ({ ...s, title: nextTitle, timestamp: new Date() }));
+      if (isRemote) {
+        try {
+          await apiJson(
+            apiBaseUrl,
+            `/api/chats/${chatId}`,
+            { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: nextTitle }) },
+            { timeoutMs: 30000 },
+          );
+        } catch (error) {
+          void error;
+        }
+      }
     } else {
       updateChatSession(chatId, (s) => ({ ...s, timestamp: new Date() }));
+    }
+
+    if (isRemote) {
+      const persistMessage = async (message) => {
+        await apiJson(
+          apiBaseUrl,
+          `/api/chats/${chatId}/messages`,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(message) },
+          { timeoutMs: 30000 },
+        );
+      };
+      try {
+        await persistMessage(userMessage);
+        await persistMessage(assistantMessage);
+        loadedChatIdsRef.current.add(chatId);
+      } catch (error) {
+        void error;
+      }
     }
 
     const requestMessages = [...existingMessages, userMessage].map((m) => ({ role: m.role, content: m.content }));
@@ -599,22 +870,54 @@ function App() {
           m.id === assistantId ? { ...m, status: aborted ? 'aborted' : 'error', error, content: m.content } : m,
         ),
       );
+      if (isRemote) {
+        try {
+          await apiJson(
+            apiBaseUrl,
+            `/api/chats/${chatId}/messages/${encodeURIComponent(assistantId)}`,
+            { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: '', status: aborted ? 'aborted' : 'error', error }) },
+            { timeoutMs: 30000 },
+          );
+        } catch (e) {
+          void e;
+        }
+      }
       setRequestState({ status: 'idle', error });
       activeRequestRef.current = { controller: null, chatId: null, assistantMessageId: null };
     }
   };
 
-  const handleNewChat = () => {
+  const handleNewChat = async () => {
     if (isGenerating) stopGenerating();
-    const nextId = chatSessions.reduce((maxId, chat) => Math.max(maxId, chat.id), 0) + 1;
-    const newChat = {
-      id: nextId,
-      title: 'New Chat',
-      timestamp: new Date(),
-    };
-    setChatSessions((prev) => [newChat, ...prev]);
-    setMessagesByChatId((prev) => ({ ...prev, [nextId]: [] }));
-    setCurrentChatId(nextId);
+    if (!isRemote) {
+      const nextId = chatSessions.reduce((maxId, chat) => Math.max(maxId, chat.id), 0) + 1;
+      const newChat = {
+        id: nextId,
+        title: 'New Chat',
+        timestamp: new Date(),
+      };
+      setChatSessions((prev) => [newChat, ...prev]);
+      setMessagesByChatId((prev) => ({ ...prev, [nextId]: [] }));
+      setCurrentChatId(nextId);
+      return;
+    }
+
+    try {
+      const created = await apiJson(
+        apiBaseUrl,
+        '/api/chats',
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'New Chat' }) },
+        { timeoutMs: 30000 },
+      );
+      const session = normalizeChatSession(created) ?? normalizeChatSession(created?.item) ?? null;
+      if (!session) throw new Error('Failed to create chat');
+      setChatSessions((prev) => [session, ...prev]);
+      setMessagesByChatId((prev) => ({ ...prev, [session.id]: [] }));
+      loadedChatIdsRef.current.add(session.id);
+      setCurrentChatId(session.id);
+    } catch (err) {
+      setDataError(extractReadableError(err));
+    }
   };
 
   const handleSelectChat = (chat) => {
@@ -639,9 +942,9 @@ function App() {
     setIsAddModelOpen(false);
   };
 
-  const saveNewModel = () => {
+  const saveNewModel = async () => {
     const name = newModelName.trim();
-    const apiBaseUrl = newModelApiBaseUrl.trim();
+    const modelApiBaseUrl = newModelApiBaseUrl.trim();
     const type = newModelType.trim();
     const modelId = newModelId.trim();
     const apiKey = newModelApiKey;
@@ -649,7 +952,7 @@ function App() {
     const temperature = normalizeOptionalNumber(newModelTemperature, { min: 0, max: 2 });
     const maxTokens = normalizeOptionalNumber(newModelMaxTokens, { min: 1, max: 200000 });
 
-    if (!name || !apiBaseUrl) {
+    if (!name || !modelApiBaseUrl) {
       setAddModelError('Model name and API endpoint are required.');
       return;
     }
@@ -666,8 +969,27 @@ function App() {
       return;
     }
 
-    setModels((prev) => [...prev, { name, apiBaseUrl, source: 'custom', type, modelId, apiKey, headers, temperature, maxTokens }]);
-    setIsAddModelOpen(false);
+    const nextModel = { name, apiBaseUrl: modelApiBaseUrl, source: 'custom', type, modelId, apiKey, headers, temperature, maxTokens };
+    if (!isRemote) {
+      setModels((prev) => [...prev, nextModel]);
+      setIsAddModelOpen(false);
+      return;
+    }
+
+    try {
+      const created = await apiJson(
+        apiBaseUrl,
+        '/api/models',
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(nextModel) },
+        { timeoutMs: 30000 },
+      );
+      const model = normalizeModelConfig(created) ?? normalizeModelConfig(created?.item) ?? normalizeModelConfig(created?.model) ?? nextModel;
+      setModels((prev) => [...prev, model]);
+      setIsAddModelOpen(false);
+      setDataError('');
+    } catch (err) {
+      setAddModelError(extractReadableError(err));
+    }
   };
 
   const openEditModel = (model) => {
@@ -689,10 +1011,10 @@ function App() {
     setEditModelError('');
   };
 
-  const saveEditedModel = () => {
+  const saveEditedModel = async () => {
     const originalName = editModelOriginalName;
     const name = editModelName.trim();
-    const apiBaseUrl = editModelApiBaseUrl.trim();
+    const modelApiBaseUrl = editModelApiBaseUrl.trim();
     const type = editModelType.trim();
     const modelId = editModelId.trim();
     const apiKey = editModelApiKey;
@@ -700,7 +1022,7 @@ function App() {
     const temperature = normalizeOptionalNumber(editModelTemperature, { min: 0, max: 2 });
     const maxTokens = normalizeOptionalNumber(editModelMaxTokens, { min: 1, max: 200000 });
 
-    if (!name || !apiBaseUrl) {
+    if (!name || !modelApiBaseUrl) {
       setEditModelError('Model name and API endpoint are required.');
       return;
     }
@@ -719,10 +1041,33 @@ function App() {
       return;
     }
 
-    setModels((prev) => prev.map((m) => (m.name === originalName ? { ...m, name, apiBaseUrl, type, modelId, apiKey, headers, temperature, maxTokens } : m)));
+    const existing = models.find((m) => m.name === originalName) ?? null;
+    const updated = { ...(existing ?? {}), name, apiBaseUrl: modelApiBaseUrl, type, modelId, apiKey, headers, temperature, maxTokens };
 
-    if (selectedModel === originalName) setSelectedModel(name);
-    setIsEditModelOpen(false);
+    if (!isRemote) {
+      setModels((prev) => prev.map((m) => (m.name === originalName ? updated : m)));
+      if (selectedModel === originalName) setSelectedModel(name);
+      setIsEditModelOpen(false);
+      return;
+    }
+
+    try {
+      const id = existing?.id;
+      const path = id != null ? `/api/models/${id}` : `/api/models/by-name/${encodeURIComponent(originalName)}`;
+      const saved = await apiJson(
+        apiBaseUrl,
+        path,
+        { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated) },
+        { timeoutMs: 30000 },
+      );
+      const model = normalizeModelConfig(saved) ?? normalizeModelConfig(saved?.item) ?? updated;
+      setModels((prev) => prev.map((m) => (m.name === originalName ? model : m)));
+      if (selectedModel === originalName) setSelectedModel(name);
+      setIsEditModelOpen(false);
+      setDataError('');
+    } catch (err) {
+      setEditModelError(extractReadableError(err));
+    }
   };
 
   const openDeleteModelConfirm = (e, modelName) => {
@@ -746,11 +1091,21 @@ function App() {
     return { left, top };
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!confirmPopover) return;
 
     if (confirmPopover.kind === 'deleteModel') {
       const modelName = confirmPopover.modelName;
+      if (isRemote) {
+        const model = models.find((m) => m.name === modelName) ?? null;
+        try {
+          const id = model?.id;
+          const path = id != null ? `/api/models/${id}` : `/api/models/by-name/${encodeURIComponent(modelName)}`;
+          await apiJson(apiBaseUrl, path, { method: 'DELETE' }, { timeoutMs: 30000 });
+        } catch (error) {
+          void error;
+        }
+      }
       setModels((prev) => {
         const remaining = prev.filter((m) => m.name !== modelName);
         if (selectedModel === modelName) {
@@ -763,6 +1118,13 @@ function App() {
 
     if (confirmPopover.kind === 'deleteChat') {
       const chatId = confirmPopover.chatId;
+      if (isRemote) {
+        try {
+          await apiJson(apiBaseUrl, `/api/chats/${chatId}`, { method: 'DELETE' }, { timeoutMs: 30000 });
+        } catch (error) {
+          void error;
+        }
+      }
       const remaining = chatSessions.filter((c) => c.id !== chatId);
       let nextSessions = remaining;
       let nextCurrentChatId = currentChatId;
@@ -812,10 +1174,22 @@ function App() {
     setRenameDraft('');
   };
 
-  const saveRenameCurrentChat = () => {
+  const saveRenameCurrentChat = async () => {
     const next = renameDraft.trim();
     if (!next) return;
     updateChatSession(currentChatId, (s) => ({ ...s, title: next, timestamp: new Date() }));
+    if (isRemote) {
+      try {
+        await apiJson(
+          apiBaseUrl,
+          `/api/chats/${currentChatId}`,
+          { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: next }) },
+          { timeoutMs: 30000 },
+        );
+      } catch (error) {
+        void error;
+      }
+    }
     setIsRenamingChat(false);
   };
 
@@ -893,7 +1267,7 @@ function App() {
   };
 
   return (
-    <div className="app">
+    <div className="app" title={dataError || undefined}>
       {/* Left Sidebar */}
       <div className="sidebar">
         {/* Header Section */}
