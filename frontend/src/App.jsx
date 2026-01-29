@@ -6,21 +6,6 @@ import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github-dark.css';
 import './App.css';
 
-const MODELS_STORAGE_KEY = 'viper.models';
-const SELECTED_MODEL_STORAGE_KEY = 'viper.selectedModel';
-const CHAT_SESSIONS_STORAGE_KEY = 'viper.chatSessions';
-const CHAT_STATE_STORAGE_KEY_V2 = 'viper.chatState.v2';
-
-const DEFAULT_MODELS = [
-  { name: 'GPT-4', apiBaseUrl: '', source: 'built-in', type: 'chat.completions', modelId: 'gpt-4', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
-  { name: 'GPT-4-Turbo', apiBaseUrl: '', source: 'built-in', type: 'chat.completions', modelId: 'gpt-4-turbo', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
-  { name: 'GPT-3.5-Turbo', apiBaseUrl: '', source: 'built-in', type: 'chat.completions', modelId: 'gpt-3.5-turbo', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
-  { name: 'Claude-3-Opus', apiBaseUrl: '', source: 'built-in', type: 'chat.completions', modelId: 'claude-3-opus', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
-  { name: 'Claude-3-Sonnet', apiBaseUrl: '', source: 'built-in', type: 'chat.completions', modelId: 'claude-3-sonnet', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
-  { name: 'llama-2-70b', apiBaseUrl: '', source: 'built-in', type: 'chat.completions', modelId: 'llama-2-70b', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
-  { name: 'Mistral-Large', apiBaseUrl: '', source: 'built-in', type: 'chat.completions', modelId: 'mistral-large', apiKey: '', headers: '', temperature: 1, maxTokens: 1024 },
-];
-
 function safeJsonParse(raw) {
   if (!raw) return null;
   try {
@@ -74,148 +59,16 @@ function parseHeadersJson(raw) {
   return headers;
 }
 
-function parseStoredModels(raw) {
-  if (!raw) return null;
-  const parsed = safeJsonParse(raw);
-  if (!Array.isArray(parsed)) return null;
-
-  const models = parsed
-    .filter((m) => m && typeof m === 'object')
-    .map((m) => {
-      const name = typeof m.name === 'string' ? m.name.trim() : '';
-      const apiBaseUrl = typeof m.apiBaseUrl === 'string' ? m.apiBaseUrl.trim() : '';
-      const source = typeof m.source === 'string' ? m.source : 'custom';
-      const type = typeof m.type === 'string' ? m.type.trim() : 'chat.completions';
-      const modelId = typeof m.modelId === 'string' ? m.modelId.trim() : '';
-      const apiKey = typeof m.apiKey === 'string' ? m.apiKey : '';
-      const headers = typeof m.headers === 'string' ? m.headers : '';
-      const temperature = m.temperature == null ? undefined : normalizeOptionalNumber(m.temperature, { min: 0, max: 2 });
-      const maxTokens = m.maxTokens == null ? undefined : normalizeOptionalNumber(m.maxTokens, { min: 1, max: 200000 });
-      return { name, apiBaseUrl, source, type, modelId, apiKey, headers, temperature, maxTokens };
-    })
-    .filter((m) => m.name.length > 0);
-
-  if (models.length === 0) return null;
-  return models;
-}
-
 function getInitialModels() {
-  try {
-    const stored = parseStoredModels(localStorage.getItem(MODELS_STORAGE_KEY));
-    return stored ?? DEFAULT_MODELS;
-  } catch (error) {
-    void error;
-    return DEFAULT_MODELS;
-  }
+  return [];
 }
 
 function getInitialSelectedModel(initialModels) {
-  try {
-    const stored = localStorage.getItem(SELECTED_MODEL_STORAGE_KEY);
-    const candidate = stored && stored.trim().length > 0 ? stored.trim() : '';
-    if (candidate && initialModels.some((m) => m.name === candidate)) return candidate;
-    return initialModels[0]?.name ?? 'GPT-4';
-  } catch (error) {
-    void error;
-    return initialModels[0]?.name ?? 'GPT-4';
-  }
-}
-
-function parseStoredChatSessions(raw) {
-  if (!raw) return null;
-  const parsed = safeJsonParse(raw);
-  if (!Array.isArray(parsed)) return null;
-
-  const sessions = parsed
-    .filter((s) => s && typeof s === 'object')
-    .map((s) => {
-      const id = Number.isFinite(Number(s.id)) ? Number(s.id) : null;
-      const title = typeof s.title === 'string' ? s.title.trim() : '';
-      const timestamp = s.timestamp ? new Date(s.timestamp) : null;
-      if (!id || !title || !timestamp || Number.isNaN(timestamp.getTime())) return null;
-      return { id, title, timestamp };
-    })
-    .filter(Boolean);
-
-  if (sessions.length === 0) return null;
-  return sessions;
-}
-
-function parseStoredChatStateV2(raw) {
-  const parsed = safeJsonParse(raw);
-  if (!parsed || typeof parsed !== 'object') return null;
-  const sessionsRaw = parsed.sessions;
-  const messagesByChatIdRaw = parsed.messagesByChatId;
-  const currentChatIdRaw = parsed.currentChatId;
-  if (!Array.isArray(sessionsRaw) || !messagesByChatIdRaw || typeof messagesByChatIdRaw !== 'object') return null;
-
-  const sessions = sessionsRaw
-    .filter((s) => s && typeof s === 'object')
-    .map((s) => {
-      const id = Number.isFinite(Number(s.id)) ? Number(s.id) : null;
-      const title = typeof s.title === 'string' ? s.title.trim() : '';
-      const timestamp = s.timestamp ? new Date(s.timestamp) : null;
-      if (!id || !title || !timestamp || Number.isNaN(timestamp.getTime())) return null;
-      return { id, title, timestamp };
-    })
-    .filter(Boolean);
-
-  if (sessions.length === 0) return null;
-
-  const messagesByChatId = {};
-  for (const session of sessions) {
-    const rawMessages = messagesByChatIdRaw[String(session.id)];
-    if (!Array.isArray(rawMessages)) {
-      messagesByChatId[session.id] = [];
-      continue;
-    }
-    messagesByChatId[session.id] = rawMessages
-      .filter((m) => m && typeof m === 'object')
-      .map((m) => {
-        const id = typeof m.id === 'string' && m.id.trim().length > 0 ? m.id : createId();
-        const role = m.role === 'assistant' ? 'assistant' : 'user';
-        const content = typeof m.content === 'string' ? m.content : '';
-        const createdAt = typeof m.createdAt === 'string' && m.createdAt ? m.createdAt : new Date().toISOString();
-        const status = typeof m.status === 'string' ? m.status : 'sent';
-        const error = typeof m.error === 'string' ? m.error : '';
-        return { id, role, content, createdAt, status, error };
-      });
-  }
-
-  const currentChatId = Number.isFinite(Number(currentChatIdRaw)) ? Number(currentChatIdRaw) : sessions[0].id;
-  return { sessions, messagesByChatId, currentChatId };
-}
-
-function getInitialChatHistory() {
-  const now = Date.now();
-  const fallback = [
-    { id: 1, title: 'New Chat', timestamp: new Date(now) },
-    { id: 2, title: 'Previous Conversation', timestamp: new Date(now - 86400000) },
-    { id: 3, title: 'Another Chat', timestamp: new Date(now - 172800000) },
-    { id: 4, title: 'Old Discussion', timestamp: new Date(now - 259200000) },
-    { id: 5, title: 'Sample Chat 1', timestamp: new Date(now - 345600000) },
-    { id: 6, title: 'Sample Chat 2', timestamp: new Date(now - 432000000) },
-  ];
-
-  try {
-    const stored = parseStoredChatSessions(localStorage.getItem(CHAT_SESSIONS_STORAGE_KEY));
-    return stored ?? fallback;
-  } catch (error) {
-    void error;
-    return fallback;
-  }
+  return initialModels[0]?.name ?? '';
 }
 
 function getInitialChatState() {
-  const storedV2 = parseStoredChatStateV2(localStorage.getItem(CHAT_STATE_STORAGE_KEY_V2));
-  if (storedV2) return storedV2;
-
-  const migrated = getInitialChatHistory();
-  const sessions = migrated.map((c) => ({ id: c.id, title: c.title, timestamp: c.timestamp }));
-  const messagesByChatId = {};
-  for (const s of sessions) messagesByChatId[s.id] = [];
-  const currentChatId = sessions[0]?.id ?? 1;
-  return { sessions, messagesByChatId, currentChatId };
+  return { sessions: [], messagesByChatId: {}, currentChatId: null };
 }
 
 function buildChatTitleFromText(text) {
@@ -322,7 +175,7 @@ async function loadRemoteBootstrap(baseUrl) {
   const models = modelsRaw.map(normalizeModelConfig).filter(Boolean);
   const sessions = sessionsRaw.map(normalizeChatSession).filter(Boolean);
   const selectedModel = typeof bootstrap?.selectedModel === 'string' ? bootstrap.selectedModel : typeof bootstrap?.selectedModelName === 'string' ? bootstrap.selectedModelName : '';
-  const currentChatId = Number.isFinite(Number(bootstrap?.currentChatId)) ? Number(bootstrap.currentChatId) : (sessions[0]?.id ?? 1);
+  const currentChatId = Number.isFinite(Number(bootstrap?.currentChatId)) ? Number(bootstrap.currentChatId) : (sessions[0]?.id ?? null);
   const messagesByChatIdRaw = bootstrap?.messagesByChatId && typeof bootstrap.messagesByChatId === 'object' ? bootstrap.messagesByChatId : null;
   const messagesByChatId = {};
   if (messagesByChatIdRaw) {
@@ -359,6 +212,14 @@ function extractReadableError(err) {
   } catch {
     return 'Unknown error';
   }
+}
+
+function isIgnorableAbort(err) {
+  if (!err) return false;
+  if (err?.name === 'AbortError') return true;
+  const message = typeof err?.message === 'string' ? err.message : '';
+  if (message.includes('ERR_ABORTED')) return true;
+  return false;
 }
 
 function getOpenAiDeltaContent(payload) {
@@ -429,7 +290,6 @@ async function streamOpenAiSse(response, { onDelta, signal }) {
 function App() {
   const [inputValue, setInputValue] = useState('');
   const apiBaseUrl = useMemo(() => getApiBaseUrl(), []);
-  const [storageMode, setStorageMode] = useState('local');
   const [dataError, setDataError] = useState('');
   const initialChatState = useMemo(() => getInitialChatState(), []);
   const [chatSessions, setChatSessions] = useState(() => initialChatState.sessions);
@@ -470,6 +330,7 @@ function App() {
   const messagesAreaRef = useRef(null);
   const loadedChatIdsRef = useRef(new Set());
   const remoteReadyRef = useRef(false);
+  const selectedModelSyncedRef = useRef('');
   const activeRequestRef = useRef({ controller: null, chatId: null, assistantMessageId: null });
 
   const currentChatTitle = chatSessions.find((c) => c.id === currentChatId)?.title ?? 'New Chat';
@@ -477,7 +338,6 @@ function App() {
   const lastMessageContent = useMemo(() => messages[messages.length - 1]?.content ?? '', [messages]);
   const isGenerating = requestState.status === 'sending' || requestState.status === 'streaming';
   const selectedModelConfig = useMemo(() => models.find((m) => m.name === selectedModel) ?? null, [models, selectedModel]);
-  const isRemote = storageMode === 'remote';
   const contextTokens = useMemo(() => estimateContextTokens(messages), [messages]);
   const contextBudget = useMemo(
     () => clampNumber(selectedModelConfig?.maxTokens, { min: 1, max: 200000, fallback: 1024 }),
@@ -506,24 +366,6 @@ function App() {
   }, [inputValue]);
 
   useEffect(() => {
-    if (storageMode !== 'local') return;
-    try {
-      localStorage.setItem(MODELS_STORAGE_KEY, JSON.stringify(models));
-    } catch (error) {
-      void error;
-    }
-  }, [models, storageMode]);
-
-  useEffect(() => {
-    if (storageMode !== 'local') return;
-    try {
-      localStorage.setItem(SELECTED_MODEL_STORAGE_KEY, selectedModel);
-    } catch (error) {
-      void error;
-    }
-  }, [selectedModel, storageMode]);
-
-  useEffect(() => {
     if (!showModelDropdown) return;
     const onMouseDown = (e) => {
       const el = modelSelectorRef.current;
@@ -535,18 +377,10 @@ function App() {
   }, [showModelDropdown]);
 
   useEffect(() => {
-    if (storageMode !== 'local') return;
-    try {
-      const serializable = {
-        sessions: chatSessions.map((c) => ({ ...c, timestamp: c.timestamp.toISOString() })),
-        currentChatId,
-        messagesByChatId,
-      };
-      localStorage.setItem(CHAT_STATE_STORAGE_KEY_V2, JSON.stringify(serializable));
-    } catch (error) {
-      void error;
-    }
-  }, [chatSessions, messagesByChatId, currentChatId, storageMode]);
+    if (models.length > 0) return;
+    if (!showModelDropdown) return;
+    setShowModelDropdown(false);
+  }, [models.length, showModelDropdown]);
 
   useEffect(() => {
     let cancelled = false;
@@ -554,20 +388,21 @@ function App() {
       try {
         const next = await loadRemoteBootstrap(apiBaseUrl);
         if (cancelled) return;
-        if (next.models.length > 0) setModels(next.models);
+        setModels(next.models);
         const nextSelected = next.selectedModel && next.models.some((m) => m.name === next.selectedModel)
           ? next.selectedModel
           : next.models[0]?.name ?? '';
-        if (nextSelected) setSelectedModel(nextSelected);
-        if (next.sessions.length > 0) setChatSessions(next.sessions);
+        setSelectedModel(nextSelected);
+        selectedModelSyncedRef.current = nextSelected;
+        setChatSessions(next.sessions);
         setMessagesByChatId(next.messagesByChatId);
         setCurrentChatId(next.currentChatId);
         loadedChatIdsRef.current = new Set(Object.keys(next.messagesByChatId ?? {}).map((k) => Number(k)).filter((n) => Number.isFinite(n)));
         remoteReadyRef.current = true;
-        setStorageMode('remote');
         setDataError('');
       } catch (err) {
         if (cancelled) return;
+        if (isIgnorableAbort(err)) return;
         setDataError(extractReadableError(err));
       }
     };
@@ -578,7 +413,6 @@ function App() {
   }, [apiBaseUrl]);
 
   useEffect(() => {
-    if (!isRemote) return;
     const chatId = currentChatId;
     if (!chatId) return;
     if (loadedChatIdsRef.current.has(chatId)) return;
@@ -602,6 +436,7 @@ function App() {
         setMessagesByChatId((prev) => ({ ...prev, [chatId]: messages }));
       } catch (err) {
         if (cancelled) return;
+        if (isIgnorableAbort(err)) return;
         setDataError(extractReadableError(err));
       }
     };
@@ -609,13 +444,13 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [apiBaseUrl, currentChatId, isRemote]);
+  }, [apiBaseUrl, currentChatId]);
 
   useEffect(() => {
-    if (!isRemote) return;
     if (!remoteReadyRef.current) return;
     const model = models.find((m) => m.name === selectedModel) ?? null;
     if (!model) return;
+    if (selectedModelSyncedRef.current === model.name) return;
     let cancelled = false;
     const run = async () => {
       try {
@@ -625,8 +460,10 @@ function App() {
           { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: model.name, id: model.id }) },
           { timeoutMs: 30000 },
         );
+        selectedModelSyncedRef.current = model.name;
       } catch (err) {
         if (cancelled) return;
+        if (isIgnorableAbort(err)) return;
         setDataError(extractReadableError(err));
       }
     };
@@ -634,7 +471,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [apiBaseUrl, isRemote, models, selectedModel]);
+  }, [apiBaseUrl, models, selectedModel]);
 
   useEffect(() => {
     if (!confirmPopover) return;
@@ -668,17 +505,6 @@ function App() {
     setChatSessions((prev) => prev.map((s) => (s.id === chatId ? updater(s) : s)));
   };
 
-  const ensureChatExists = () => {
-    const exists = chatSessions.some((c) => c.id === currentChatId);
-    if (exists) return currentChatId;
-    const nextId = chatSessions.reduce((maxId, chat) => Math.max(maxId, chat.id), 0) + 1;
-    const newChat = { id: nextId, title: 'New Chat', timestamp: new Date() };
-    setChatSessions((prev) => [newChat, ...prev]);
-    setMessagesByChatId((prev) => ({ ...prev, [nextId]: [] }));
-    setCurrentChatId(nextId);
-    return nextId;
-  };
-
   const stopGenerating = () => {
     const active = activeRequestRef.current;
     if (!active.controller) return;
@@ -692,8 +518,8 @@ function App() {
   const runChatCompletion = async ({ chatId, assistantMessageId, mode, requestMessages }) => {
     const model = selectedModelConfig;
     if (!model) throw new Error('No model selected');
-    const baseUrl = model.apiBaseUrl?.trim?.() ?? '';
-    if (!baseUrl) throw new Error('Model API endpoint is empty. Set it in Settings → Models.');
+    const upstreamBaseUrl = model.apiBaseUrl?.trim?.() ?? '';
+    if (!upstreamBaseUrl) throw new Error('Model API endpoint is empty. Set it in Settings → Models.');
 
     const headersFromJson = parseHeadersJson(model.headers);
     if (headersFromJson === null) throw new Error('Model headers must be valid JSON');
@@ -716,7 +542,15 @@ function App() {
       : visible;
 
     const payload = {
-      model: model.modelId?.trim?.() ? model.modelId.trim() : model.name,
+      model: {
+        id: model.id ?? null,
+        name: model.name,
+        apiBaseUrl: upstreamBaseUrl,
+        type: model.type ?? 'chat.completions',
+        modelId: model.modelId ?? '',
+        apiKey: model.apiKey ?? '',
+        headers: headersFromJson,
+      },
       messages: finalMessages,
       stream: true,
       temperature: clampNumber(model.temperature, { min: 0, max: 2, fallback: 1 }),
@@ -724,14 +558,8 @@ function App() {
       viper: { chat_id: chatId, assistant_message_id: assistantMessageId, mode },
     };
 
-    const url = joinUrl(baseUrl, '/chat/completions');
-    const requestHeaders = {
-      'Content-Type': 'application/json',
-      ...headersFromJson,
-    };
-    if (model.apiKey?.trim?.()) {
-      requestHeaders.Authorization = `Bearer ${model.apiKey.trim()}`;
-    }
+    const url = joinUrl(apiBaseUrl, '/api/llm/chat/completions');
+    const requestHeaders = { 'Content-Type': 'application/json' };
 
     const response = await fetchWithTimeout(
       url,
@@ -769,21 +597,19 @@ function App() {
       prev.map((m) => (m.id === assistantMessageId ? { ...m, status: 'sent', error: '' } : m)),
     );
     updateChatSession(chatId, (s) => ({ ...s, timestamp: new Date() }));
-    if (isRemote) {
-      try {
-        await apiJson(
-          apiBaseUrl,
-          `/api/chats/${chatId}/messages/${encodeURIComponent(assistantMessageId)}`,
-          {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content: assistantContent, status: 'sent', error: '' }),
-          },
-          { timeoutMs: 30000 },
-        );
-      } catch (error) {
-        void error;
-      }
+    try {
+      await apiJson(
+        apiBaseUrl,
+        `/api/chats/${chatId}/messages/${encodeURIComponent(assistantMessageId)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: assistantContent, status: 'sent', error: '' }),
+        },
+        { timeoutMs: 30000 },
+      );
+    } catch (error) {
+      void error;
     }
     setRequestState({ status: 'idle', error: '' });
     activeRequestRef.current = { controller: null, chatId: null, assistantMessageId: null };
@@ -813,7 +639,7 @@ function App() {
       return session.id;
     };
 
-    const chatId = isRemote ? await ensureRemoteChatExists() : ensureChatExists();
+    const chatId = await ensureRemoteChatExists();
     const existingMessages = messagesByChatId[chatId] ?? [];
     const userMessage = { id: createId(), role: 'user', content: text, createdAt: new Date().toISOString(), status: 'sent', error: '' };
     const assistantId = createId();
@@ -825,38 +651,34 @@ function App() {
     if (existingMessages.filter((m) => m.role === 'user').length === 0) {
       const nextTitle = buildChatTitleFromText(text);
       updateChatSession(chatId, (s) => ({ ...s, title: nextTitle, timestamp: new Date() }));
-      if (isRemote) {
-        try {
-          await apiJson(
-            apiBaseUrl,
-            `/api/chats/${chatId}`,
-            { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: nextTitle }) },
-            { timeoutMs: 30000 },
-          );
-        } catch (error) {
-          void error;
-        }
+      try {
+        await apiJson(
+          apiBaseUrl,
+          `/api/chats/${chatId}`,
+          { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: nextTitle }) },
+          { timeoutMs: 30000 },
+        );
+      } catch (error) {
+        void error;
       }
     } else {
       updateChatSession(chatId, (s) => ({ ...s, timestamp: new Date() }));
     }
 
-    if (isRemote) {
-      const persistMessage = async (message) => {
-        await apiJson(
-          apiBaseUrl,
-          `/api/chats/${chatId}/messages`,
-          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(message) },
-          { timeoutMs: 30000 },
-        );
-      };
-      try {
-        await persistMessage(userMessage);
-        await persistMessage(assistantMessage);
-        loadedChatIdsRef.current.add(chatId);
-      } catch (error) {
-        void error;
-      }
+    const persistMessage = async (message) => {
+      await apiJson(
+        apiBaseUrl,
+        `/api/chats/${chatId}/messages`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(message) },
+        { timeoutMs: 30000 },
+      );
+    };
+    try {
+      await persistMessage(userMessage);
+      await persistMessage(assistantMessage);
+      loadedChatIdsRef.current.add(chatId);
+    } catch (error) {
+      void error;
     }
 
     const requestMessages = [...existingMessages, userMessage].map((m) => ({ role: m.role, content: m.content }));
@@ -870,17 +692,15 @@ function App() {
           m.id === assistantId ? { ...m, status: aborted ? 'aborted' : 'error', error, content: m.content } : m,
         ),
       );
-      if (isRemote) {
-        try {
-          await apiJson(
-            apiBaseUrl,
-            `/api/chats/${chatId}/messages/${encodeURIComponent(assistantId)}`,
-            { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: '', status: aborted ? 'aborted' : 'error', error }) },
-            { timeoutMs: 30000 },
-          );
-        } catch (e) {
-          void e;
-        }
+      try {
+        await apiJson(
+          apiBaseUrl,
+          `/api/chats/${chatId}/messages/${encodeURIComponent(assistantId)}`,
+          { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: '', status: aborted ? 'aborted' : 'error', error }) },
+          { timeoutMs: 30000 },
+        );
+      } catch (e) {
+        void e;
       }
       setRequestState({ status: 'idle', error });
       activeRequestRef.current = { controller: null, chatId: null, assistantMessageId: null };
@@ -889,19 +709,6 @@ function App() {
 
   const handleNewChat = async () => {
     if (isGenerating) stopGenerating();
-    if (!isRemote) {
-      const nextId = chatSessions.reduce((maxId, chat) => Math.max(maxId, chat.id), 0) + 1;
-      const newChat = {
-        id: nextId,
-        title: 'New Chat',
-        timestamp: new Date(),
-      };
-      setChatSessions((prev) => [newChat, ...prev]);
-      setMessagesByChatId((prev) => ({ ...prev, [nextId]: [] }));
-      setCurrentChatId(nextId);
-      return;
-    }
-
     try {
       const created = await apiJson(
         apiBaseUrl,
@@ -970,12 +777,6 @@ function App() {
     }
 
     const nextModel = { name, apiBaseUrl: modelApiBaseUrl, source: 'custom', type, modelId, apiKey, headers, temperature, maxTokens };
-    if (!isRemote) {
-      setModels((prev) => [...prev, nextModel]);
-      setIsAddModelOpen(false);
-      return;
-    }
-
     try {
       const created = await apiJson(
         apiBaseUrl,
@@ -1044,13 +845,6 @@ function App() {
     const existing = models.find((m) => m.name === originalName) ?? null;
     const updated = { ...(existing ?? {}), name, apiBaseUrl: modelApiBaseUrl, type, modelId, apiKey, headers, temperature, maxTokens };
 
-    if (!isRemote) {
-      setModels((prev) => prev.map((m) => (m.name === originalName ? updated : m)));
-      if (selectedModel === originalName) setSelectedModel(name);
-      setIsEditModelOpen(false);
-      return;
-    }
-
     try {
       const id = existing?.id;
       const path = id != null ? `/api/models/${id}` : `/api/models/by-name/${encodeURIComponent(originalName)}`;
@@ -1096,21 +890,18 @@ function App() {
 
     if (confirmPopover.kind === 'deleteModel') {
       const modelName = confirmPopover.modelName;
-      if (isRemote) {
-        const model = models.find((m) => m.name === modelName) ?? null;
-        try {
-          const id = model?.id;
-          const path = id != null ? `/api/models/${id}` : `/api/models/by-name/${encodeURIComponent(modelName)}`;
-          await apiJson(apiBaseUrl, path, { method: 'DELETE' }, { timeoutMs: 30000 });
-        } catch (error) {
-          void error;
-        }
+      const model = models.find((m) => m.name === modelName) ?? null;
+      try {
+        const id = model?.id;
+        const path = id != null ? `/api/models/${id}` : `/api/models/by-name/${encodeURIComponent(modelName)}`;
+        await apiJson(apiBaseUrl, path, { method: 'DELETE' }, { timeoutMs: 30000 });
+      } catch (error) {
+        void error;
       }
       setModels((prev) => {
         const remaining = prev.filter((m) => m.name !== modelName);
         if (selectedModel === modelName) {
-          const nextSelected = remaining[0]?.name ?? DEFAULT_MODELS[0]?.name ?? 'GPT-4';
-          setSelectedModel(nextSelected);
+          setSelectedModel(remaining[0]?.name ?? '');
         }
         return remaining;
       });
@@ -1118,27 +909,17 @@ function App() {
 
     if (confirmPopover.kind === 'deleteChat') {
       const chatId = confirmPopover.chatId;
-      if (isRemote) {
-        try {
-          await apiJson(apiBaseUrl, `/api/chats/${chatId}`, { method: 'DELETE' }, { timeoutMs: 30000 });
-        } catch (error) {
-          void error;
-        }
+      try {
+        await apiJson(apiBaseUrl, `/api/chats/${chatId}`, { method: 'DELETE' }, { timeoutMs: 30000 });
+      } catch (error) {
+        void error;
       }
       const remaining = chatSessions.filter((c) => c.id !== chatId);
-      let nextSessions = remaining;
+      const nextSessions = remaining;
       let nextCurrentChatId = currentChatId;
-      let shouldAddFallback = false;
 
       if (chatId === currentChatId) {
-        const next = remaining[0]?.id ?? null;
-        if (next) nextCurrentChatId = next;
-        else {
-          const fallbackId = 1;
-          nextCurrentChatId = fallbackId;
-          shouldAddFallback = true;
-          nextSessions = [{ id: fallbackId, title: 'New Chat', timestamp: new Date() }];
-        }
+        nextCurrentChatId = remaining[0]?.id ?? null;
       }
 
       setChatSessions(nextSessions);
@@ -1146,7 +927,6 @@ function App() {
       setMessagesByChatId((prev) => {
         const next = { ...prev };
         delete next[chatId];
-        if (shouldAddFallback && !next[nextCurrentChatId]) next[nextCurrentChatId] = [];
         return next;
       });
     }
@@ -1178,17 +958,15 @@ function App() {
     const next = renameDraft.trim();
     if (!next) return;
     updateChatSession(currentChatId, (s) => ({ ...s, title: next, timestamp: new Date() }));
-    if (isRemote) {
-      try {
-        await apiJson(
-          apiBaseUrl,
-          `/api/chats/${currentChatId}`,
-          { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: next }) },
-          { timeoutMs: 30000 },
-        );
-      } catch (error) {
-        void error;
-      }
+    try {
+      await apiJson(
+        apiBaseUrl,
+        `/api/chats/${currentChatId}`,
+        { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: next }) },
+        { timeoutMs: 30000 },
+      );
+    } catch (error) {
+      void error;
     }
     setIsRenamingChat(false);
   };
@@ -1284,9 +1062,13 @@ function App() {
         <div className="model-selector-container" ref={modelSelectorRef}>
           <button
             className="model-selector"
-            onClick={() => setShowModelDropdown(!showModelDropdown)}
+            disabled={models.length === 0}
+            onClick={() => {
+              if (models.length === 0) return;
+              setShowModelDropdown(!showModelDropdown);
+            }}
           >
-            <span>{selectedModel}</span>
+            <span>{selectedModel || 'Select Models'}</span>
             <DownOutlined className={`dropdown-icon ${showModelDropdown ? 'open' : ''}`} />
           </button>
           {showModelDropdown && (
