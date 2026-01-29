@@ -1,10 +1,12 @@
-import os
+from pathlib import Path
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-_base_dir = os.path.dirname(__file__)
-_db_file = os.path.join(_base_dir, "viper.db")
-SQLALCHEMY_DATABASE_URL = f"sqlite:///{_db_file}"
+from ..core.paths import get_app_data_dir
+
+_db_file: Path = get_app_data_dir() / "viper.db"
+SQLALCHEMY_DATABASE_URL = f"sqlite:///{_db_file.as_posix()}"
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
