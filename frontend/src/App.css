@@ -18,6 +18,37 @@
   --content-max-width: 800px; /* 统一的内容最大宽度 */
   --composer-side-padding: 64px;
   --composer-bottom-padding: 76px;
+  
+  /* New Tech Fonts */
+  --font-tech: 'Rajdhani', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+::selection {
+  background: var(--accent);
+  color: #000;
+  text-shadow: none;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+  transition: background 0.2s;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 html, body {
@@ -100,8 +131,8 @@ button {
 
 .brandName {
   font-size: 32px;
-  font-weight: 900;
-  letter-spacing: -1px;
+  font-weight: 700;
+  letter-spacing: 2px;
   color: var(--text);
   text-transform: uppercase;
   margin-left: 22px; /* Shifted right by 10px (was 12px) */
@@ -109,6 +140,8 @@ button {
   text-align: center;
   /* Visual offset to look centered relative to container width not just flex space */
   padding-right: 40px; /* Offset the icon button width */
+  font-family: var(--font-tech);
+  text-shadow: 0 0 15px rgba(204, 255, 0, 0.3);
 }
 
 .iconBtn {
@@ -371,14 +404,15 @@ button {
 
 .heroTitle {
   font-size: 120px;
-  font-weight: 900;
+  font-weight: 700;
   color: var(--text);
-  letter-spacing: -6px;
+  letter-spacing: -2px;
   line-height: 1;
   animation: glowPulse 4s infinite ease-in-out, float 6s ease-in-out infinite;
   text-shadow: 0 0 40px rgba(204, 255, 0, 0.3);
   cursor: default;
   user-select: none;
+  font-family: var(--font-tech);
 }
 
 .heroSub {
@@ -564,17 +598,17 @@ button {
 /* Composer */
 .composer {
   width: 100%;
-  padding: 20px 0;
+  padding: 20px 0 50px 0; /* Increased bottom padding to lift composer */
   flex-shrink: 0; /* 防止被压缩 */
 }
 
 .app.has-messages .composer {
   padding-top: 10px;
-  padding-bottom: 20px;
+  padding-bottom: 50px;
 }
 
 .app.is-empty .composer {
-  padding-bottom: 40px; /* 空状态时底部留更多空间 */
+  padding-bottom: 70px; /* 空状态时底部留更多空间 */
 }
 
 .composerInnerWrap {
@@ -632,13 +666,13 @@ textarea {
   background: transparent;
   border: none;
   color: var(--text);
-  font-size: 18px;
+  font-size: 16px;
   resize: none;
   outline: none;
   padding: 15px 20px; /* 上下15px，左右20px */
   padding-bottom: 60px; /* 底部留60px给按钮，防止遮挡 */
-  font-family: inherit;
-  line-height: 1.5;
+  font-family: var(--font-mono);
+  line-height: 1.6;
   overflow-y: hidden; /* 取消滚动 */
   box-sizing: border-box;
   height: auto; /* 高度自动 */
@@ -757,10 +791,13 @@ textarea::placeholder {
 
 .modalTitle {
   font-size: 24px;
-  font-weight: 800;
+  font-weight: 700;
   color: var(--text);
   margin: 0;
-  letter-spacing: -0.5px;
+  letter-spacing: 1px;
+  font-family: var(--font-tech);
+  text-transform: uppercase;
+  text-shadow: 0 0 10px rgba(204, 255, 0, 0.2);
 }
 
 .modalBody {
@@ -884,6 +921,7 @@ textarea::placeholder {
   color: var(--text);
   font-size: 15px;
   transition: all 0.2s;
+  font-family: var(--font-mono);
 }
 .inputField:focus {
   border-color: var(--accent);

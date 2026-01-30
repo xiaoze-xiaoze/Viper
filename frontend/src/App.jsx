@@ -499,7 +499,7 @@ export default function App() {
             </div>
             
             <div className="modalBody">
-              <button className="modalBtn primary fullWidth centered-btn" onClick={() => setAddModelOpen(true)} style={{marginBottom: '16px'}}>
+              <button className="modalBtn primary centered-btn" onClick={() => setAddModelOpen(true)} style={{marginBottom: '16px'}}>
                 Add New Model
               </button>
               

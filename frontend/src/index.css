@@ -1,0 +1,6 @@
+/* Global styles should be managed in App.css to avoid conflicts */
+body {
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
