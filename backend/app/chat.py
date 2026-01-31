@@ -10,8 +10,9 @@ from .sessions import get_session, insert_message, list_messages
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
-def openai_compatible_chat(base_url: str, api_key: Optional[str], model: str, extra_headers: Dict[str, Any], messages: List[Dict[str, str]], temperature: float) -> Dict[str, Any]:
-    url = base_url.rstrip("/") + "/v1/chat/completions"
+def openai_compatible_chat(base_url: str, chat_completions_path: str, api_key: Optional[str], model: str, extra_headers: Dict[str, Any], messages: List[Dict[str, str]], temperature: float) -> Dict[str, Any]:
+    chat_path = chat_completions_path if chat_completions_path.startswith("/") else f"/{chat_completions_path}"
+    url = base_url.rstrip("/") + chat_path
     payload = {
         "model": model,
         "messages": messages,
@@ -37,8 +38,9 @@ def openai_compatible_chat(base_url: str, api_key: Optional[str], model: str, ex
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"upstream error: {str(e)}")
 
-def _openai_compatible_request(base_url: str, api_key: Optional[str], model: str, extra_headers: Dict[str, Any], messages: List[Dict[str, str]], temperature: float) -> Request:
-    url = base_url.rstrip("/") + "/v1/chat/completions"
+def _openai_compatible_request(base_url: str, chat_completions_path: str, api_key: Optional[str], model: str, extra_headers: Dict[str, Any], messages: List[Dict[str, str]], temperature: float) -> Request:
+    chat_path = chat_completions_path if chat_completions_path.startswith("/") else f"/{chat_completions_path}"
+    url = base_url.rstrip("/") + chat_path
     payload = {
         "model": model,
         "messages": messages,
@@ -82,6 +84,7 @@ def chat(payload: ChatRequest) -> Dict[str, Any]:
     upstream_messages = [{"role": m["role"], "content": m["content"]} for m in history]
     raw = openai_compatible_chat(
         base_url=cfg["base_url"],
+        chat_completions_path=cfg.get("chat_completions_path") or "/v1/chat/completions",
         api_key=cfg["api_key"],
         model=cfg["model"],
         extra_headers=cfg["extra_headers"],
@@ -115,6 +118,7 @@ def chat_stream(payload: ChatRequest):
 
     req = _openai_compatible_request(
         base_url=cfg["base_url"],
+        chat_completions_path=cfg.get("chat_completions_path") or "/v1/chat/completions",
         api_key=cfg["api_key"],
         model=cfg["model"],
         extra_headers=cfg["extra_headers"],

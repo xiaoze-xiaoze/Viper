@@ -16,19 +16,23 @@ def get_api_config(api_config_id: int) -> Dict[str, Any]:
 def create_api_config(payload: ApiConfigCreate) -> Dict[str, Any]:
     now = utc_now_iso()
     base_url = payload.base_url.rstrip("/")
+    chat_path = payload.chat_completions_path if payload.chat_completions_path.startswith("/") else f"/{payload.chat_completions_path}"
     with db_session() as db:
         cur = db.execute(
             """
-            INSERT INTO api_configs(name, kind, base_url, api_key, model, extra_headers_json, created_at, updated_at)
-            VALUES(?,?,?,?,?,?,?,?);
+            INSERT INTO api_configs(name, kind, provider, base_url, api_key, model, chat_completions_path, extra_headers_json, temperature, created_at, updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?);
             """,
             (
                 payload.name,
                 payload.kind,
+                payload.provider,
                 base_url,
                 payload.api_key,
                 payload.model,
+                chat_path,
                 dumps_json_obj(payload.extra_headers),
+                payload.temperature,
                 now,
                 now,
             ),
@@ -50,29 +54,38 @@ def read_api_config(api_config_id: int) -> Dict[str, Any]:
 @router.put("/{api_config_id}", response_model=ApiConfigOut)
 def update_api_config(api_config_id: int, payload: ApiConfigUpdate) -> Dict[str, Any]:
     existing = get_api_config(api_config_id)
+    next_chat_path = payload.chat_completions_path
+    if next_chat_path is not None:
+        next_chat_path = next_chat_path if next_chat_path.startswith("/") else f"/{next_chat_path}"
     merged = {
         "name": payload.name if payload.name is not None else existing["name"],
         "kind": payload.kind if payload.kind is not None else existing["kind"],
+        "provider": payload.provider if payload.provider is not None else existing["provider"],
         "base_url": (payload.base_url.rstrip("/") if payload.base_url is not None else existing["base_url"]),
         "api_key": payload.api_key if payload.api_key is not None else existing["api_key"],
         "model": payload.model if payload.model is not None else existing["model"],
+        "chat_completions_path": next_chat_path if next_chat_path is not None else existing["chat_completions_path"],
         "extra_headers": payload.extra_headers if payload.extra_headers is not None else existing["extra_headers"],
+        "temperature": payload.temperature if payload.temperature is not None else existing["temperature"],
     }
     now = utc_now_iso()
     with db_session() as db:
         db.execute(
             """
             UPDATE api_configs
-            SET name=?, kind=?, base_url=?, api_key=?, model=?, extra_headers_json=?, updated_at=?
+            SET name=?, kind=?, provider=?, base_url=?, api_key=?, model=?, chat_completions_path=?, extra_headers_json=?, temperature=?, updated_at=?
             WHERE id=?;
             """,
             (
                 merged["name"],
                 merged["kind"],
+                merged["provider"],
                 merged["base_url"],
                 merged["api_key"],
                 merged["model"],
+                merged["chat_completions_path"],
                 dumps_json_obj(merged["extra_headers"]),
+                merged["temperature"],
                 now,
                 api_config_id,
             ),

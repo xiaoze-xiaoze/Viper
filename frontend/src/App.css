@@ -819,7 +819,7 @@ textarea::placeholder {
 }
 
 .sendBtn.stopBtn {
-  background: rgba(255, 68, 68, 0.14);
+  background: rgba(255, 68, 68, 0.16);
   color: #ff4444;
   border: 1px solid rgba(255, 68, 68, 0.3);
   box-shadow: none;
@@ -827,7 +827,7 @@ textarea::placeholder {
 
 .sendBtn.stopBtn:hover {
   transform: scale(1.1);
-  box-shadow: 0 8px 24px rgba(255, 68, 68, 0.18);
+  box-shadow: 0 8px 24px rgba(255, 68, 68, 0.22);
 }
 
 .scrollToBottomBtn {

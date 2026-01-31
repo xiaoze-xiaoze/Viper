@@ -47,19 +47,14 @@ function makeModel(values) {
   }
 }
 
-function isLegacySeedModel(model) {
-  return (
-    model?.name === 'DeepSeek' &&
-    model?.provider === 'deepseek' &&
-    model?.baseUrl === 'https://api.deepseek.com' &&
-    model?.model === 'deepseek-chat' &&
-    model?.chatCompletionsPath === '/v1/chat/completions'
-  )
-}
-
 export default function App() {
+  const backendUrl = useMemo(
+    () => normalizeBaseUrl(import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8000'),
+    [],
+  )
+
   const [models, setModels] = useState([])
-  const [modelId, setModelId] = useState('')
+  const [modelId, setModelId] = useState(null)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [modelEditorOpen, setModelEditorOpen] = useState(false)
@@ -110,83 +105,137 @@ export default function App() {
   const readerRef = useRef(null)
   const isAtBottomRef = useRef(true)
 
-  // TODO: Fetch models from backend
-  useEffect(() => {
-    // api.getModels().then(data => {
-    //   setModels(data)
-    //   if (data.length > 0) setModelId(data[0].id)
-    // })
-    
-    // Temporary: Set empty or default if needed for UI testing without backend
-    // setModels([]) 
-  }, [])
-
-  useEffect(() => {
-    const rawModels = localStorage.getItem('viper.models.v1')
-    const rawModelId = localStorage.getItem('viper.modelId.v1')
-    let parsedModels = null
-    try {
-      parsedModels = rawModels ? JSON.parse(rawModels) : null
-    } catch {
-      parsedModels = null
-    }
-    const safeModels = Array.isArray(parsedModels) ? parsedModels.map(makeModel) : null
-    if (safeModels?.length) {
-      if (safeModels.length === 1 && isLegacySeedModel(safeModels[0])) {
-        localStorage.removeItem('viper.models.v1')
-        localStorage.removeItem('viper.modelId.v1')
-        setModels([])
-        setModelId('')
-        return
+  const apiFetch = useCallback(
+    async (path, init) => {
+      const resp = await fetch(`${backendUrl}${path}`, init)
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '')
+        throw new Error(`${resp.status} ${resp.statusText}${text ? `\n${text}` : ''}`)
       }
-      setModels(safeModels)
-      const preferredId =
-        rawModelId && safeModels.some((m) => m.id === rawModelId) ? rawModelId : safeModels[0].id
-      setModelId(preferredId)
-      return
-    }
-    setModels([])
-    setModelId('')
+      return resp
+    },
+    [backendUrl],
+  )
+
+  const isoToMs = useCallback((iso) => {
+    const ms = Date.parse(`${iso || ''}`)
+    return Number.isFinite(ms) ? ms : Date.now()
   }, [])
 
-  useEffect(() => {
-    localStorage.setItem('viper.models.v1', JSON.stringify(models))
-  }, [models])
+  const apiConfigToModel = useCallback(
+    (cfg) =>
+      makeModel({
+        id: cfg.id,
+        name: cfg.name,
+        provider: cfg.provider || '',
+        baseUrl: cfg.base_url,
+        apiKey: cfg.api_key || '',
+        model: cfg.model,
+        chatCompletionsPath: cfg.chat_completions_path || '/v1/chat/completions',
+        headersJson: JSON.stringify(cfg.extra_headers || {}, null, 2),
+        temperature: Number.isFinite(Number(cfg.temperature)) ? Number(cfg.temperature) : 0.7,
+      }),
+    [],
+  )
+
+  const loadModels = useCallback(async () => {
+    const resp = await apiFetch('/api-configs', { method: 'GET' })
+    const data = await resp.json()
+    const list = Array.isArray(data) ? data : []
+    const nextModels = list.map(apiConfigToModel)
+    setModels(nextModels)
+    setModelId((prev) => {
+      if (prev != null && nextModels.some((m) => m.id === prev)) return prev
+      return nextModels.length ? nextModels[0].id : null
+    })
+  }, [apiConfigToModel, apiFetch])
 
   useEffect(() => {
-    if (modelId) localStorage.setItem('viper.modelId.v1', modelId)
-    else localStorage.removeItem('viper.modelId.v1')
-  }, [modelId])
+    let mounted = true
+    const run = async () => {
+      try {
+        await loadModels()
+      } catch {
+        if (!mounted) return
+        setModels([])
+        setModelId(null)
+      }
+    }
+    void run()
+    return () => {
+      mounted = false
+    }
+  }, [loadModels])
 
   useEffect(() => {
     if (models.length === 0) {
-      if (modelId) setModelId('')
+      if (modelId != null) setModelId(null)
       return
     }
     if (modelId && models.some((m) => m.id === modelId)) return
     setModelId(models[0].id)
   }, [modelId, models])
 
-  const startNewChat = useCallback(() => {
-    const s = makeSession('New Chat')
-    setSessions((prev) => [s, ...prev])
-    setActiveSessionId(s.id)
-    setDraft('')
-  }, [])
+  const sessionOutToSession = useCallback(
+    (s) => ({
+      id: s.id,
+      title: s.title || 'New Chat',
+      apiConfigId: s.api_config_id ?? null,
+      updatedAt: isoToMs(s.updated_at),
+      messages: [],
+    }),
+    [isoToMs],
+  )
 
-  // TODO: Fetch sessions from backend
-  useEffect(() => {
-    // api.getSessions().then(data => {
-    //   setSessions(data)
-    //   if (data.length > 0) setActiveSessionId(data[0].id)
-    //   else startNewChat()
-    // })
-    
-    // Temporary initialization for UI to work
-    if (sessions.length === 0) {
-      startNewChat()
+  const messageOutToMessage = useCallback(
+    (m) => ({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      ts: isoToMs(m.created_at),
+    }),
+    [isoToMs],
+  )
+
+  const loadSessions = useCallback(async () => {
+    const resp = await apiFetch('/sessions', { method: 'GET' })
+    const data = await resp.json()
+    const list = Array.isArray(data) ? data : []
+    const nextSessions = list.map(sessionOutToSession)
+    setSessions(nextSessions)
+    setActiveSessionId((prev) => {
+      if (prev != null && nextSessions.some((s) => s.id === prev)) return prev
+      return nextSessions.length ? nextSessions[0].id : null
+    })
+    if (!nextSessions.length) {
+      const created = await apiFetch('/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'New Chat', api_config_id: modelId ?? null }),
+      }).then((r) => r.json())
+      const s = sessionOutToSession(created)
+      setSessions([s])
+      setActiveSessionId(s.id)
     }
-  }, [sessions.length, startNewChat])
+  }, [apiFetch, modelId, sessionOutToSession])
+
+  useEffect(() => {
+    let mounted = true
+    const run = async () => {
+      try {
+        await loadSessions()
+      } catch {
+        if (!mounted) return
+        const fallback = makeSession('New Chat')
+        setSessions([fallback])
+        setActiveSessionId(fallback.id)
+      }
+    }
+    void run()
+    return () => {
+      mounted = false
+    }
+  }, [loadSessions])
 
   const activeSession = useMemo(
     () => sessions.find((s) => s.id === activeSessionId) || sessions[0],
@@ -194,6 +243,30 @@ export default function App() {
   )
 
   const hasMessages = (activeSession?.messages?.length || 0) > 0
+
+  useEffect(() => {
+    if (typeof activeSessionId !== 'number') return
+    let cancelled = false
+    const run = async () => {
+      try {
+        const detail = await apiFetch(`/sessions/${activeSessionId}`, { method: 'GET' }).then((r) => r.json())
+        if (cancelled) return
+        const nextSession = sessionOutToSession(detail.session)
+        const nextMessages = Array.isArray(detail.messages) ? detail.messages.map(messageOutToMessage) : []
+        nextSession.messages = nextMessages
+        setSessions((prev) => prev.map((s) => (s.id === nextSession.id ? nextSession : s)))
+        if (nextSession.apiConfigId != null) {
+          setModelId((prev) => (prev === nextSession.apiConfigId ? prev : nextSession.apiConfigId))
+        }
+      } catch (e) {
+        void e
+      }
+    }
+    void run()
+    return () => {
+      cancelled = true
+    }
+  }, [activeSessionId, apiFetch, messageOutToMessage, sessionOutToSession])
 
   const scrollToBottom = useCallback((behavior = 'smooth') => {
     const el = chatScrollRef.current
@@ -270,24 +343,55 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  const deleteSession = (sessionId) => {
-    setSessions((prev) => {
-      const next = prev.filter((s) => s.id !== sessionId)
-      const safeNext = next.length ? next : [makeSession('New Chat')]
-      setActiveSessionId((currentActive) => {
-        if (currentActive !== sessionId) return currentActive
-        return safeNext[0].id
+  const startNewChat = useCallback(async () => {
+    const created = await apiFetch('/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'New Chat', api_config_id: modelId ?? null }),
+    }).then((r) => r.json())
+    const s = sessionOutToSession(created)
+    setSessions((prev) => [s, ...prev])
+    setActiveSessionId(s.id)
+    setDraft('')
+  }, [apiFetch, modelId, sessionOutToSession])
+
+  const deleteSession = useCallback(
+    async (sessionId) => {
+      if (typeof sessionId === 'number') {
+        try {
+          await apiFetch(`/sessions/${sessionId}`, { method: 'DELETE' })
+        } catch (e) {
+          void e
+        }
+      }
+      setSessions((prev) => {
+        const next = prev.filter((s) => s.id !== sessionId)
+        setActiveSessionId((currentActive) => {
+          if (currentActive !== sessionId) return currentActive
+          return next.length ? next[0].id : null
+        })
+        return next
       })
-      return safeNext
-    })
-  }
+    },
+    [apiFetch],
+  )
 
   const updateSession = (sessionId, updater) => {
     setSessions((prev) => prev.map((s) => (s.id === sessionId ? updater(s) : s)))
   }
 
   const deleteModel = (id) => {
-    setModels((prev) => prev.filter((m) => m.id !== id))
+    if (typeof id !== 'number') return
+    const run = async () => {
+      await apiFetch(`/api-configs/${id}`, { method: 'DELETE' })
+      await loadModels()
+      setModelId((prev) => {
+        if (prev == null) return null
+        if (prev === id) return null
+        return prev
+      })
+    }
+    void run()
   }
 
   const openCreateModel = () => {
@@ -321,26 +425,51 @@ export default function App() {
     if (!name) return
 
     const temperature = Number.parseFloat(`${modelFormTemperature || ''}`.trim())
-    const nextModel = makeModel({
-      id: editingModelId,
+    let extraHeaders = {}
+    try {
+      const raw = `${modelFormHeadersJson || ''}`.trim()
+      const parsed = raw ? JSON.parse(raw) : {}
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('Headers JSON 必须是对象，例如 {"X-Test":"1"}')
+      }
+      extraHeaders = parsed
+    } catch (e) {
+      void e
+      return
+    }
+
+    const payload = {
       name,
-      provider: modelFormProvider,
-      baseUrl: modelFormBaseUrl,
-      apiKey: modelFormApiKey,
-      model: modelFormModel,
-      chatCompletionsPath: modelFormChatCompletionsPath,
-      headersJson: modelFormHeadersJson,
+      kind: 'openai_compatible',
+      provider: `${modelFormProvider || ''}`,
+      base_url: `${modelFormBaseUrl || ''}`.trim(),
+      api_key: `${modelFormApiKey || ''}`.trim() || null,
+      model: `${modelFormModel || ''}`.trim(),
+      chat_completions_path: `${modelFormChatCompletionsPath || '/v1/chat/completions'}`.trim(),
+      extra_headers: extraHeaders,
       temperature: Number.isFinite(temperature) ? temperature : 0.7,
-    })
+    }
 
-    setModels((prev) => {
-      if (editingModelId) return prev.map((m) => (m.id === editingModelId ? nextModel : m))
-      return [...prev, nextModel]
-    })
-    if (!editingModelId) setModelId(nextModel.id)
-
-    setModelEditorOpen(false)
-    setEditingModelId(null)
+    const run = async () => {
+      if (typeof editingModelId === 'number') {
+        await apiFetch(`/api-configs/${editingModelId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+      } else {
+        const created = await apiFetch('/api-configs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }).then((r) => r.json())
+        setModelId(created?.id ?? null)
+      }
+      await loadModels()
+      setModelEditorOpen(false)
+      setEditingModelId(null)
+    }
+    void run()
   }
 
   const send = async () => {
@@ -380,89 +509,48 @@ export default function App() {
         },
       ],
     }))
-    
-    const selectedModel = models.find((m) => m.id === modelId)
-    if (!selectedModel) {
-      updateSession(activeSession.id, (s) => ({
-        ...s,
-        messages: s.messages.map((m) =>
-          m.id === assistantMsgId ? { ...m, content: '未选择模型，无法发送请求。' } : m,
-        ),
-      }))
-      setSending(false)
-      streamingRef.current = false
-      return
-    }
-
-    const baseUrl = normalizeBaseUrl(selectedModel.baseUrl)
-    if (!baseUrl) {
-      updateSession(activeSession.id, (s) => ({
-        ...s,
-        messages: s.messages.map((m) =>
-          m.id === assistantMsgId ? { ...m, content: 'Base URL 为空，请先在 Settings 里配置模型。' } : m,
-        ),
-      }))
-      setSending(false)
-      streamingRef.current = false
-      return
-    }
-    const chatPath = `${selectedModel.chatCompletionsPath || '/v1/chat/completions'}`.startsWith('/')
-      ? selectedModel.chatCompletionsPath
-      : `/${selectedModel.chatCompletionsPath}`
-    const url = `${baseUrl}${chatPath}`
-
-    const outgoingMessages = [...activeSession.messages, userMessage].map((m) => ({
-      role: m.role,
-      content: m.content,
-    }))
 
     try {
       const controller = new AbortController()
       abortControllerRef.current = controller
-
-      let extraHeaders = {}
-      try {
-        const raw = `${selectedModel.headersJson || ''}`.trim()
-        const parsed = raw ? JSON.parse(raw) : {}
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-          throw new Error('Headers JSON 必须是对象，例如 {"X-Test":"1"}')
-        }
-        extraHeaders = parsed
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : `${e}`
+      const selectedModel = models.find((m) => m.id === modelId)
+      if (!selectedModel) {
         updateSession(activeSession.id, (s) => ({
           ...s,
           messages: s.messages.map((m) =>
-            m.id === assistantMsgId ? { ...m, content: `Headers JSON 解析失败：${msg}` } : m,
+            m.id === assistantMsgId ? { ...m, content: '未选择模型，无法发送请求。' } : m,
           ),
         }))
-        setSending(false)
-        streamingRef.current = false
         return
       }
 
-      const resp = await fetch(url, {
+      const nextTitle = activeSession.title === 'New Chat' ? titleFromText(text) : activeSession.title
+      if (typeof activeSession.id === 'number') {
+        try {
+          await apiFetch(`/sessions/${activeSession.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: nextTitle, api_config_id: selectedModel.id }),
+          })
+        } catch (e) {
+          void e
+        }
+      }
+
+      const resp = await apiFetch('/chat/stream', {
         method: 'POST',
         signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
-          ...(selectedModel.apiKey
-            ? { Authorization: `Bearer ${selectedModel.apiKey}` }
-            : {}),
-          ...extraHeaders,
+          Accept: 'text/event-stream',
         },
         body: JSON.stringify({
-          model: selectedModel.model,
-          messages: outgoingMessages,
+          session_id: activeSession.id,
+          api_config_id: selectedModel.id,
+          user_content: text,
           temperature: Number.isFinite(Number(selectedModel.temperature)) ? Number(selectedModel.temperature) : 0.7,
-          stream: true,
         }),
       })
-
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => '')
-        throw new Error(`${resp.status} ${resp.statusText}${text ? `\n${text}` : ''}`)
-      }
 
       if (!resp.body) throw new Error('Response body is empty')
 
@@ -501,6 +589,18 @@ export default function App() {
               m.id === assistantMsgId ? { ...m, content: `${m.content || ''}${piece}` } : m,
             ),
           }))
+        }
+      }
+
+      if (typeof activeSession.id === 'number') {
+        try {
+          const detail = await apiFetch(`/sessions/${activeSession.id}`, { method: 'GET' }).then((r) => r.json())
+          const nextSession = sessionOutToSession(detail.session)
+          const nextMessages = Array.isArray(detail.messages) ? detail.messages.map(messageOutToMessage) : []
+          nextSession.messages = nextMessages
+          setSessions((prev) => prev.map((s) => (s.id === activeSession.id ? nextSession : s)))
+        } catch (e) {
+          void e
         }
       }
     } catch (err) {
@@ -549,26 +649,6 @@ export default function App() {
     document.execCommand('copy')
     document.body.removeChild(host)
   }, [])
-
-  const removeMessagePair = useCallback((sessionId, messageId) => {
-    updateSession(sessionId, (s) => {
-      const idx = s.messages.findIndex((m) => m.id === messageId)
-      if (idx === -1) return s
-      const nextMessages = [...s.messages]
-      const removeCount =
-        nextMessages[idx]?.role === 'user' && nextMessages[idx + 1]?.role === 'assistant' ? 2 : 1
-      nextMessages.splice(idx, removeCount)
-      return { ...s, updatedAt: Date.now(), messages: nextMessages }
-    })
-  }, [])
-
-  const editUserMessage = useCallback((m) => {
-    if (!activeSession) return
-    setDraft(m?.content || '')
-    removeMessagePair(activeSession.id, m.id)
-    requestAnimationFrame(() => composerTextareaRef.current?.focus?.())
-    requestAnimationFrame(() => scrollToBottom('smooth'))
-  }, [activeSession, removeMessagePair, scrollToBottom])
 
   const onSubmit = (e) => {
     e.preventDefault()
@@ -742,29 +822,6 @@ export default function App() {
                             <button
                               type="button"
                               className="msgActionBtn"
-                              aria-label="Edit"
-                              title="Edit"
-                              onClick={() => editUserMessage(m)}
-                            >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                                <path
-                                  d="M12 20h9"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                />
-                                <path
-                                  d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                />
-                              </svg>
-                            </button>
-                            <button
-                              type="button"
-                              className="msgActionBtn"
                               aria-label="Copy"
                               title="Copy"
                               onClick={() => copyToClipboard(m.content)}
@@ -781,36 +838,6 @@ export default function App() {
                                 />
                                 <path
                                   d="M7 15H6a2 2 0 01-2-2V6a2 2 0 012-2h7a2 2 0 012 2v1"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                />
-                              </svg>
-                            </button>
-                            <button
-                              type="button"
-                              className="msgActionBtn danger"
-                              aria-label="Delete"
-                              title="Delete"
-                              onClick={() => removeMessagePair(activeSession.id, m.id)}
-                            >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                                <path
-                                  d="M3 6h18"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                />
-                                <path
-                                  d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                />
-                                <path
-                                  d="M6 6l1 16a2 2 0 002 2h6a2 2 0 002-2l1-16"
                                   stroke="currentColor"
                                   strokeWidth="2"
                                   strokeLinecap="round"
@@ -887,15 +914,8 @@ export default function App() {
                       title="Stop"
                     >
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                        <rect
-                          x="7"
-                          y="7"
-                          width="10"
-                          height="10"
-                          rx="2"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                        />
+                        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+                        <rect x="9" y="9" width="6" height="6" rx="1.2" fill="currentColor" />
                       </svg>
                     </button>
                   ) : (

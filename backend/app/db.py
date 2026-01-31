@@ -36,10 +36,13 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 kind TEXT NOT NULL,
+                provider TEXT NOT NULL DEFAULT '',
                 base_url TEXT NOT NULL,
                 api_key TEXT,
                 model TEXT NOT NULL,
+                chat_completions_path TEXT NOT NULL DEFAULT '/v1/chat/completions',
                 extra_headers_json TEXT NOT NULL DEFAULT '{}',
+                temperature REAL NOT NULL DEFAULT 0.7,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -74,6 +77,14 @@ def init_db() -> None:
             cols = {r["name"] for r in db.execute("PRAGMA table_info(api_configs);").fetchall()}
             if "update_at" in cols and "updated_at" not in cols:
                 db.execute("ALTER TABLE api_configs RENAME COLUMN update_at TO updated_at;")
+            if "provider" not in cols:
+                db.execute("ALTER TABLE api_configs ADD COLUMN provider TEXT NOT NULL DEFAULT '';")
+            if "chat_completions_path" not in cols:
+                db.execute(
+                    "ALTER TABLE api_configs ADD COLUMN chat_completions_path TEXT NOT NULL DEFAULT '/v1/chat/completions';"
+                )
+            if "temperature" not in cols:
+                db.execute("ALTER TABLE api_configs ADD COLUMN temperature REAL NOT NULL DEFAULT 0.7;")
         except Exception:
             pass
 
@@ -96,10 +107,13 @@ def api_config_row(row: sqlite3.Row) -> Dict[str, Any]:
         "id": row["id"],
         "name": row["name"],
         "kind": row["kind"],
+        "provider": row["provider"] if "provider" in keys else "",
         "base_url": row["base_url"],
         "api_key": row["api_key"],
         "model": row["model"],
+        "chat_completions_path": row["chat_completions_path"] if "chat_completions_path" in keys else "/v1/chat/completions",
         "extra_headers": loads_json_obj(row["extra_headers_json"] if "extra_headers_json" in keys else None),
+        "temperature": float(row["temperature"]) if "temperature" in keys and row["temperature"] is not None else 0.7,
         "created_at": row["created_at"],
         "updated_at": updated_at,
     }

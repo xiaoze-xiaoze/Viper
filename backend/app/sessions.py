@@ -1,7 +1,7 @@
 from typing import Any, Dict, List
 from fastapi import APIRouter, HTTPException
 from .db import db_session, message_row, session_row, utc_now_iso
-from .schemas import MessageCreate, MessageOut, SessionCreate, SessionOut, SessionWithMessages
+from .schemas import MessageCreate, MessageOut, SessionCreate, SessionOut, SessionUpdate, SessionWithMessages
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -59,6 +59,22 @@ def read_session(session_id: int) -> Dict[str, Any]:
     session = get_session(session_id)
     messages = list_messages(session_id)
     return {"session": session, "messages": messages}
+
+@router.put("/{session_id}", response_model=SessionOut)
+def update_session(session_id: int, payload: SessionUpdate) -> Dict[str, Any]:
+    existing = get_session(session_id)
+    merged = {
+        "title": payload.title if payload.title is not None else existing["title"],
+        "api_config_id": payload.api_config_id if payload.api_config_id is not None else existing["api_config_id"],
+    }
+    now = utc_now_iso()
+    with db_session() as db:
+        db.execute(
+            "UPDATE chat_sessions SET title=?, api_config_id=?, updated_at=? WHERE id=?;",
+            (merged["title"], merged["api_config_id"], now, session_id),
+        )
+        row = db.execute("SELECT * FROM chat_sessions WHERE id = ?;", (session_id,)).fetchone()
+        return session_row(row)
 
 @router.delete("/{session_id}")
 def delete_session(session_id: int) -> Dict[str, Any]:
