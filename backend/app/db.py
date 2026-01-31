@@ -41,7 +41,7 @@ def init_db() -> None:
                 model TEXT NOT NULL,
                 extra_headers_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
-                update_at TEXT NOT NULL
+                updated_at TEXT NOT NULL
             );
             """
         )
@@ -70,6 +70,12 @@ def init_db() -> None:
             """
         )
         db.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id);")
+        try:
+            cols = {r["name"] for r in db.execute("PRAGMA table_info(api_configs);").fetchall()}
+            if "update_at" in cols and "updated_at" not in cols:
+                db.execute("ALTER TABLE api_configs RENAME COLUMN update_at TO updated_at;")
+        except Exception:
+            pass
 
 def dumps_json_obj(value: Optional[Dict[str, Any]]) -> str:
     return json.dumps(value or {}, ensure_ascii=False, separators=(",", ":"))
@@ -84,6 +90,8 @@ def loads_json_obj(value: Optional[str]) -> Dict[str, Any]:
         return {}
 
 def api_config_row(row: sqlite3.Row) -> Dict[str, Any]:
+    keys = set(row.keys())
+    updated_at = row["updated_at"] if "updated_at" in keys else (row["update_at"] if "update_at" in keys else None)
     return {
         "id": row["id"],
         "name": row["name"],
@@ -91,9 +99,9 @@ def api_config_row(row: sqlite3.Row) -> Dict[str, Any]:
         "base_url": row["base_url"],
         "api_key": row["api_key"],
         "model": row["model"],
-        "extra_headers_json": loads_json_obj(row["extra_headers_json"]),
+        "extra_headers": loads_json_obj(row["extra_headers_json"] if "extra_headers_json" in keys else None),
         "created_at": row["created_at"],
-        "updated_at": row["updated_at"],
+        "updated_at": updated_at,
     }
 
 def session_row(row: sqlite3.Row) -> Dict[str, Any]:

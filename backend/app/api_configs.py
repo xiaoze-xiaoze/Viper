@@ -7,7 +7,7 @@ router = APIRouter(prefix="/api-configs", tags=["api-configs"])
 
 def get_api_config(api_config_id: int) -> Dict[str, Any]:
     with db_session() as db:
-        row = db.execute("SELETE * FROM api_configs WHERE id = ?;", (api_config_id,)).fetchone()
+        row = db.execute("SELECT * FROM api_configs WHERE id = ?;", (api_config_id,)).fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="API config not found")
         return api_config_row(row)
@@ -15,7 +15,7 @@ def get_api_config(api_config_id: int) -> Dict[str, Any]:
 @router.post("", response_model=ApiConfigOut)
 def create_api_config(payload: ApiConfigCreate) -> Dict[str, Any]:
     now = utc_now_iso()
-    base_url = payload.base_url.rsplit("/")
+    base_url = payload.base_url.rstrip("/")
     with db_session() as db:
         cur = db.execute(
             """
