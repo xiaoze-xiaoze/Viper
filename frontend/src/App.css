@@ -955,6 +955,15 @@ textarea::placeholder {
   transition: all 0.2s;
   font-family: var(--font-mono);
 }
+.inputField[type='number'] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.inputField[type='number']::-webkit-outer-spin-button,
+.inputField[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
 .inputField:focus {
   border-color: var(--accent);
   outline: none;

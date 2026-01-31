@@ -42,6 +42,8 @@ function makeModel(values) {
     apiKey: values.apiKey || '',
     model: values.model || '',
     chatCompletionsPath: values.chatCompletionsPath || '/v1/chat/completions',
+    headersJson: typeof values.headersJson === 'string' ? values.headersJson : '{}',
+    temperature: Number.isFinite(Number(values.temperature)) ? Number(values.temperature) : 0.7,
   }
 }
 
@@ -75,6 +77,8 @@ export default function App() {
   const [modelFormApiKey, setModelFormApiKey] = useState('')
   const [modelFormModel, setModelFormModel] = useState('')
   const [modelFormChatCompletionsPath, setModelFormChatCompletionsPath] = useState('/v1/chat/completions')
+  const [modelFormHeadersJson, setModelFormHeadersJson] = useState('{}')
+  const [modelFormTemperature, setModelFormTemperature] = useState('0.7')
 
   const [contextMenu, setContextMenu] = useState(null)
 
@@ -261,6 +265,8 @@ export default function App() {
     setModelFormApiKey('')
     setModelFormModel('')
     setModelFormChatCompletionsPath('/v1/chat/completions')
+    setModelFormHeadersJson('{}')
+    setModelFormTemperature('0.7')
     setModelEditorOpen(true)
   }
 
@@ -272,6 +278,8 @@ export default function App() {
     setModelFormApiKey(model.apiKey || '')
     setModelFormModel(model.model || '')
     setModelFormChatCompletionsPath(model.chatCompletionsPath || '/v1/chat/completions')
+    setModelFormHeadersJson(model.headersJson || '{}')
+    setModelFormTemperature(`${Number.isFinite(Number(model.temperature)) ? Number(model.temperature) : 0.7}`)
     setModelEditorOpen(true)
   }
 
@@ -279,6 +287,7 @@ export default function App() {
     const name = `${modelFormName || ''}`.trim()
     if (!name) return
 
+    const temperature = Number.parseFloat(`${modelFormTemperature || ''}`.trim())
     const nextModel = makeModel({
       id: editingModelId,
       name,
@@ -287,6 +296,8 @@ export default function App() {
       apiKey: modelFormApiKey,
       model: modelFormModel,
       chatCompletionsPath: modelFormChatCompletionsPath,
+      headersJson: modelFormHeadersJson,
+      temperature: Number.isFinite(temperature) ? temperature : 0.7,
     })
 
     setModels((prev) => {
@@ -372,6 +383,27 @@ export default function App() {
     }))
 
     try {
+      let extraHeaders = {}
+      try {
+        const raw = `${selectedModel.headersJson || ''}`.trim()
+        const parsed = raw ? JSON.parse(raw) : {}
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error('Headers JSON 必须是对象，例如 {"X-Test":"1"}')
+        }
+        extraHeaders = parsed
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : `${e}`
+        updateSession(activeSession.id, (s) => ({
+          ...s,
+          messages: s.messages.map((m) =>
+            m.id === assistantMsgId ? { ...m, content: `Headers JSON 解析失败：${msg}` } : m,
+          ),
+        }))
+        setSending(false)
+        streamingRef.current = false
+        return
+      }
+
       const resp = await fetch(url, {
         method: 'POST',
         headers: {
@@ -379,10 +411,12 @@ export default function App() {
           ...(selectedModel.apiKey
             ? { Authorization: `Bearer ${selectedModel.apiKey}` }
             : {}),
+          ...extraHeaders,
         },
         body: JSON.stringify({
           model: selectedModel.model,
           messages: outgoingMessages,
+          temperature: Number.isFinite(Number(selectedModel.temperature)) ? Number(selectedModel.temperature) : 0.7,
           stream: true,
         }),
       })
@@ -788,6 +822,29 @@ export default function App() {
                   value={modelFormChatCompletionsPath}
                   onChange={e => setModelFormChatCompletionsPath(e.target.value)}
                   placeholder="/v1/chat/completions"
+                />
+              </div>
+              <div>
+                <label className="label">Headers JSON</label>
+                <textarea
+                  className="inputField"
+                  value={modelFormHeadersJson}
+                  onChange={(e) => setModelFormHeadersJson(e.target.value)}
+                  placeholder="{}"
+                  rows={4}
+                />
+              </div>
+              <div>
+                <label className="label">Temperature</label>
+                <input
+                  className="inputField"
+                  type="number"
+                  value={modelFormTemperature}
+                  onChange={(e) => setModelFormTemperature(e.target.value)}
+                  placeholder="0.7"
+                  step="0.1"
+                  min="0"
+                  max="2"
                 />
               </div>
             </div>
