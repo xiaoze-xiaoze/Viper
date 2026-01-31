@@ -484,7 +484,7 @@ button {
 .chatInner {
   display: flex;
   flex-direction: column;
-  gap: 30px;
+  gap: 40px;
   padding-bottom: 40px;
 }
 
@@ -579,6 +579,47 @@ button {
   max-width: 100%; /* 改为100%，让用户消息也能占满 */
 }
 
+.msgActions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  height: 18px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+.msgRow.is-user:hover .msgActions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.msgActionBtn {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.55);
+  background: transparent;
+  border: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.msgActionBtn:hover {
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.msgActionBtn.danger:hover {
+  color: #ff4444;
+  background: rgba(255, 68, 68, 0.1);
+  border-color: rgba(255, 68, 68, 0.25);
+}
+
 /* Markdown Styles in Bubble */
 .msgText {
   margin: 0;
@@ -648,6 +689,7 @@ button {
   margin: 0 auto;
   padding: 0 var(--chat-padding);
   width: 100%;
+  position: relative;
 }
 
 .app.has-messages .composerBox {
@@ -774,6 +816,40 @@ textarea::placeholder {
 .sendBtn:not(:disabled):hover {
   transform: scale(1.1) rotate(-10deg);
   box-shadow: 0 6px 20px rgba(204, 255, 0, 0.4);
+}
+
+.sendBtn.stopBtn {
+  background: rgba(255, 68, 68, 0.14);
+  color: #ff4444;
+  border: 1px solid rgba(255, 68, 68, 0.3);
+  box-shadow: none;
+}
+
+.sendBtn.stopBtn:hover {
+  transform: scale(1.1);
+  box-shadow: 0 8px 24px rgba(255, 68, 68, 0.18);
+}
+
+.scrollToBottomBtn {
+  position: absolute;
+  right: 20px;
+  bottom: calc(100% + 10px);
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 0;
+  background: var(--accent);
+  color: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  z-index: 15;
+}
+
+.scrollToBottomBtn:hover {
+  background: var(--accent);
+  transform: translateY(-1px);
 }
 
 /* Modals */

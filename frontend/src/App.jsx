@@ -69,6 +69,7 @@ export default function App() {
   const [activeSessionId, setActiveSessionId] = useState(null)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
+  const [isAtBottom, setIsAtBottom] = useState(true)
 
   // Settings form state
   const [modelFormName, setModelFormName] = useState('')
@@ -105,6 +106,9 @@ export default function App() {
   
   // Streaming refs
   const streamingRef = useRef(false)
+  const abortControllerRef = useRef(null)
+  const readerRef = useRef(null)
+  const isAtBottomRef = useRef(true)
 
   // TODO: Fetch models from backend
   useEffect(() => {
@@ -189,11 +193,40 @@ export default function App() {
     [activeSessionId, sessions],
   )
 
+  const hasMessages = (activeSession?.messages?.length || 0) > 0
+
+  const scrollToBottom = useCallback((behavior = 'smooth') => {
+    const el = chatScrollRef.current
+    if (!el) return
+    el.scrollTo({ top: el.scrollHeight, behavior })
+  }, [])
+
+  useEffect(() => {
+    const el = chatScrollRef.current
+    if (!el) {
+      setIsAtBottom(true)
+      isAtBottomRef.current = true
+      return
+    }
+
+    const threshold = 32
+    const onScroll = () => {
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight
+      const atBottom = distance <= threshold
+      setIsAtBottom(atBottom)
+      isAtBottomRef.current = atBottom
+    }
+
+    onScroll()
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [activeSessionId, hasMessages])
+
   // Auto scroll
   useEffect(() => {
     const el = chatScrollRef.current
     if (!el) return
-    // Only scroll if near bottom or if it's a new message
+    if (!isAtBottomRef.current) return
     el.scrollTop = el.scrollHeight
   }, [activeSession?.messages, activeSessionId])
 
@@ -317,6 +350,7 @@ export default function App() {
     setSending(true)
     setDraft('')
     streamingRef.current = true
+    isAtBottomRef.current = true
 
     const userMessage = {
       id: createId('m'),
@@ -383,6 +417,9 @@ export default function App() {
     }))
 
     try {
+      const controller = new AbortController()
+      abortControllerRef.current = controller
+
       let extraHeaders = {}
       try {
         const raw = `${selectedModel.headersJson || ''}`.trim()
@@ -406,6 +443,7 @@ export default function App() {
 
       const resp = await fetch(url, {
         method: 'POST',
+        signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
           ...(selectedModel.apiKey
@@ -429,6 +467,7 @@ export default function App() {
       if (!resp.body) throw new Error('Response body is empty')
 
       const reader = resp.body.getReader()
+      readerRef.current = reader
       const decoder = new TextDecoder('utf-8')
       let buffer = ''
 
@@ -465,6 +504,7 @@ export default function App() {
         }
       }
     } catch (err) {
+      if (err?.name === 'AbortError') return
       const msg = err instanceof Error ? err.message : `${err}`
       updateSession(activeSession.id, (s) => ({
         ...s,
@@ -475,8 +515,60 @@ export default function App() {
     } finally {
       setSending(false)
       streamingRef.current = false
+      abortControllerRef.current = null
+      readerRef.current = null
     }
   }
+
+  const stopGeneration = useCallback(() => {
+    try {
+      readerRef.current?.cancel?.()
+    } catch (e) {
+      void e
+    }
+    abortControllerRef.current?.abort?.()
+    setSending(false)
+    streamingRef.current = false
+  }, [])
+
+  const copyToClipboard = useCallback(async (text) => {
+    const value = `${text || ''}`
+    if (!value) return
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value)
+      return
+    }
+    const host = document.createElement('textarea')
+    host.value = value
+    host.style.position = 'fixed'
+    host.style.left = '-9999px'
+    host.style.top = '-9999px'
+    document.body.appendChild(host)
+    host.focus()
+    host.select()
+    document.execCommand('copy')
+    document.body.removeChild(host)
+  }, [])
+
+  const removeMessagePair = useCallback((sessionId, messageId) => {
+    updateSession(sessionId, (s) => {
+      const idx = s.messages.findIndex((m) => m.id === messageId)
+      if (idx === -1) return s
+      const nextMessages = [...s.messages]
+      const removeCount =
+        nextMessages[idx]?.role === 'user' && nextMessages[idx + 1]?.role === 'assistant' ? 2 : 1
+      nextMessages.splice(idx, removeCount)
+      return { ...s, updatedAt: Date.now(), messages: nextMessages }
+    })
+  }, [])
+
+  const editUserMessage = useCallback((m) => {
+    if (!activeSession) return
+    setDraft(m?.content || '')
+    removeMessagePair(activeSession.id, m.id)
+    requestAnimationFrame(() => composerTextareaRef.current?.focus?.())
+    requestAnimationFrame(() => scrollToBottom('smooth'))
+  }, [activeSession, removeMessagePair, scrollToBottom])
 
   const onSubmit = (e) => {
     e.preventDefault()
@@ -486,7 +578,6 @@ export default function App() {
   const hasModels = models.length > 0
   const currentModelName =
     models.find((m) => m.id === modelId)?.name || (hasModels ? modelId : 'Select Model')
-  const hasMessages = activeSession?.messages?.length > 0
 
   return (
     <div className={`app ${hasMessages ? 'has-messages' : 'is-empty'}`}>
@@ -646,6 +737,89 @@ export default function App() {
                             <Markdown>{m.content}</Markdown>
                           </div>
                         </div>
+                        {m.role === 'user' ? (
+                          <div className="msgActions" role="toolbar" aria-label="Message actions">
+                            <button
+                              type="button"
+                              className="msgActionBtn"
+                              aria-label="Edit"
+                              title="Edit"
+                              onClick={() => editUserMessage(m)}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                                <path
+                                  d="M12 20h9"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                />
+                                <path
+                                  d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                              </svg>
+                            </button>
+                            <button
+                              type="button"
+                              className="msgActionBtn"
+                              aria-label="Copy"
+                              title="Copy"
+                              onClick={() => copyToClipboard(m.content)}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                                <rect
+                                  x="9"
+                                  y="9"
+                                  width="10"
+                                  height="10"
+                                  rx="2"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                />
+                                <path
+                                  d="M7 15H6a2 2 0 01-2-2V6a2 2 0 012-2h7a2 2 0 012 2v1"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                              </svg>
+                            </button>
+                            <button
+                              type="button"
+                              className="msgActionBtn danger"
+                              aria-label="Delete"
+                              title="Delete"
+                              onClick={() => removeMessagePair(activeSession.id, m.id)}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                                <path
+                                  d="M3 6h18"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                />
+                                <path
+                                  d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                                <path
+                                  d="M6 6l1 16a2 2 0 002 2h6a2 2 0 002-2l1-16"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                              </svg>
+                            </button>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   ))}
@@ -661,6 +835,25 @@ export default function App() {
           <form className="composer" onSubmit={onSubmit}>
             <div className="composerInnerWrap">
               <div className="composerBox">
+                {hasMessages && !isAtBottom ? (
+                  <button
+                    type="button"
+                    className="scrollToBottomBtn"
+                    aria-label="Scroll to bottom"
+                    title="Scroll to bottom"
+                    onClick={() => scrollToBottom('smooth')}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                      <path
+                        d="M7 10l5 5 5-5"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                ) : null}
                 <textarea
                   ref={composerTextareaRef}
                   value={draft}
@@ -685,17 +878,39 @@ export default function App() {
                 </div>
 
                 <div className="composerRight">
-                  <button
-                    className="sendBtn"
-                    type="submit"
-                    disabled={sending || !draft.trim()}
-                    aria-label="Send"
-                    title="Send"
-                  >
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                  </button>
+                  {sending ? (
+                    <button
+                      className="sendBtn stopBtn"
+                      type="button"
+                      onClick={stopGeneration}
+                      aria-label="Stop"
+                      title="Stop"
+                    >
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                        <rect
+                          x="7"
+                          y="7"
+                          width="10"
+                          height="10"
+                          rx="2"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                        />
+                      </svg>
+                    </button>
+                  ) : (
+                    <button
+                      className="sendBtn"
+                      type="submit"
+                      disabled={!draft.trim()}
+                      aria-label="Send"
+                      title="Send"
+                    >
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
