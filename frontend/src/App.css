@@ -129,17 +129,19 @@ button {
   padding: 0 4px;
 }
 
+.brandText {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  padding-left: 10px; /* Reduced from 40px to move it slightly left */
+}
+
 .brandName {
   font-size: 32px;
   font-weight: 700;
   letter-spacing: 2px;
   color: var(--text);
   text-transform: uppercase;
-  margin-left: 22px; /* Shifted right by 10px (was 12px) */
-  flex: 1; /* Center logic */
-  text-align: center;
-  /* Visual offset to look centered relative to container width not just flex space */
-  padding-right: 40px; /* Offset the icon button width */
   font-family: var(--font-tech);
   text-shadow: 0 0 15px rgba(204, 255, 0, 0.3);
 }
@@ -188,26 +190,53 @@ button {
   position: relative;
 }
 
+.modelButton {
+  border-color: rgba(204, 255, 0, 0.28);
+}
+
+.modelButton:hover {
+  background: rgba(204, 255, 0, 0.05);
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: 0 0 18px rgba(204, 255, 0, 0.12);
+}
+
+.modelButton:disabled {
+  cursor: not-allowed;
+  background: #000;
+  border-color: #222;
+  transform: none;
+  box-shadow: none;
+}
+
+.modelButton:disabled .modelValue {
+  color: var(--text-dim);
+}
+
+.modelButton:disabled .chev {
+  display: none;
+}
+
 .modelButton .chev {
   position: absolute;
   right: 20px;
+  color: var(--accent);
 }
 
 .newChatBtn {
-  background: rgba(204, 255, 0, 0.05);
-  border-color: rgba(204, 255, 0, 0.15);
-  color: var(--accent);
+  border-color: rgba(204, 255, 0, 0.18);
   letter-spacing: 0.5px;
 }
 
-.modelButton:hover, .newChatBtn:hover {
+.newChatBtn:hover {
   border-color: var(--accent);
+  background: rgba(204, 255, 0, 0.05);
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(0,0,0,0.5);
 }
 
 .modelValue {
-  color: var(--accent);
+  color: var(--text);
   font-weight: 700;
   letter-spacing: 0.5px;
 }
@@ -217,8 +246,8 @@ button {
   top: calc(100% + 12px);
   left: 0;
   right: 0;
-  background: #111;
-  border: 1px solid var(--border);
+  background: #0b0b0b;
+  border: 1px solid rgba(204, 255, 0, 0.18);
   border-radius: var(--radius);
   z-index: 20;
   max-height: 360px;
@@ -247,19 +276,22 @@ button {
   width: 100%;
   padding: 14px 16px;
   text-align: center;
-  color: var(--text-dim);
+  color: rgba(255, 255, 255, 0.88);
   border-radius: 8px;
   transition: all 0.15s;
   font-weight: 500;
+  border: 1px solid transparent;
 }
 
 .modelItem:hover {
-  background: #222;
+  background: rgba(204, 255, 0, 0.06);
+  border-color: rgba(204, 255, 0, 0.22);
   color: var(--text);
 }
 
 .modelItem.is-active {
-  background: var(--accent-dim);
+  background: rgba(204, 255, 0, 0.1);
+  border-color: rgba(204, 255, 0, 0.35);
   color: var(--accent);
   font-weight: 700;
 }
@@ -406,7 +438,7 @@ button {
   font-size: 120px;
   font-weight: 700;
   color: var(--text);
-  letter-spacing: -2px;
+  letter-spacing: 16px;
   line-height: 1;
   animation: glowPulse 4s infinite ease-in-out, float 6s ease-in-out infinite;
   text-shadow: 0 0 40px rgba(204, 255, 0, 0.3);

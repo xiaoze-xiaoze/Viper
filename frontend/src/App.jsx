@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import Markdown from 'react-markdown'
 import './App.css'
 
@@ -6,26 +6,6 @@ import './App.css'
 function createId(prefix = 'id') {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`
 }
-
-function generateDummyModels() {
-  const base = [
-    { id: 'kimi', name: 'Kimi' },
-    { id: 'gpt-4o', name: 'GPT-4o' },
-    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
-    { id: 'claude-3-opus', name: 'Claude 3 Opus' },
-    { id: 'claude-3-sonnet', name: 'Claude 3 Sonnet' },
-    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
-    { id: 'mistral-large', name: 'Mistral Large' },
-    { id: 'llama-3-70b', name: 'Llama 3 70B' },
-  ]
-  // Add more to test scrolling
-  for (let i = 1; i <= 15; i++) {
-    base.push({ id: `custom-model-${i}`, name: `Custom Model ${i}` })
-  }
-  return base
-}
-
-const INITIAL_MODELS = generateDummyModels()
 
 function formatTime(ts) {
   const d = new Date(ts)
@@ -44,39 +24,57 @@ function makeSession(seedTitle = 'New Chat') {
   return {
     id: createId('s'),
     title: seedTitle,
-    updatedAt: Date.now() - Math.floor(Math.random() * 10000000), // Random time for variety
+    updatedAt: Date.now(),
     messages: [],
   }
 }
 
-function generateDummySessions() {
-  const sessions = []
-  for (let i = 1; i <= 25; i++) {
-    sessions.push(makeSession(`History Session ${i}`))
-  }
-  // Add one empty new chat at the top
-  const current = makeSession('New Chat')
-  current.updatedAt = Date.now()
-  return [current, ...sessions.sort((a, b) => b.updatedAt - a.updatedAt)]
+function normalizeBaseUrl(baseUrl) {
+  return `${baseUrl || ''}`.replace(/\/+$/, '')
 }
 
-const INITIAL_SESSIONS = generateDummySessions()
+function makeModel(values) {
+  return {
+    id: values.id || createId('model'),
+    name: values.name || '',
+    provider: values.provider || '',
+    baseUrl: normalizeBaseUrl(values.baseUrl),
+    apiKey: values.apiKey || '',
+    model: values.model || '',
+    chatCompletionsPath: values.chatCompletionsPath || '/v1/chat/completions',
+  }
+}
+
+function isLegacySeedModel(model) {
+  return (
+    model?.name === 'DeepSeek' &&
+    model?.provider === 'deepseek' &&
+    model?.baseUrl === 'https://api.deepseek.com' &&
+    model?.model === 'deepseek-chat' &&
+    model?.chatCompletionsPath === '/v1/chat/completions'
+  )
+}
 
 export default function App() {
-  const [models, setModels] = useState(INITIAL_MODELS)
-  const [modelId, setModelId] = useState('kimi')
+  const [models, setModels] = useState([])
+  const [modelId, setModelId] = useState('')
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [addModelOpen, setAddModelOpen] = useState(false)
+  const [modelEditorOpen, setModelEditorOpen] = useState(false)
+  const [editingModelId, setEditingModelId] = useState(null)
 
-  const [sessions, setSessions] = useState(INITIAL_SESSIONS)
-  const [activeSessionId, setActiveSessionId] = useState(INITIAL_SESSIONS[0].id)
+  const [sessions, setSessions] = useState([])
+  const [activeSessionId, setActiveSessionId] = useState(null)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
 
   // Settings form state
-  const [newModelName, setNewModelName] = useState('')
-  const [newModelApi, setNewModelApi] = useState('')
+  const [modelFormName, setModelFormName] = useState('')
+  const [modelFormProvider, setModelFormProvider] = useState('')
+  const [modelFormBaseUrl, setModelFormBaseUrl] = useState('')
+  const [modelFormApiKey, setModelFormApiKey] = useState('')
+  const [modelFormModel, setModelFormModel] = useState('')
+  const [modelFormChatCompletionsPath, setModelFormChatCompletionsPath] = useState('/v1/chat/completions')
 
   const [contextMenu, setContextMenu] = useState(null)
 
@@ -103,7 +101,84 @@ export default function App() {
   
   // Streaming refs
   const streamingRef = useRef(false)
-  const streamIntervalRef = useRef(null)
+
+  // TODO: Fetch models from backend
+  useEffect(() => {
+    // api.getModels().then(data => {
+    //   setModels(data)
+    //   if (data.length > 0) setModelId(data[0].id)
+    // })
+    
+    // Temporary: Set empty or default if needed for UI testing without backend
+    // setModels([]) 
+  }, [])
+
+  useEffect(() => {
+    const rawModels = localStorage.getItem('viper.models.v1')
+    const rawModelId = localStorage.getItem('viper.modelId.v1')
+    let parsedModels = null
+    try {
+      parsedModels = rawModels ? JSON.parse(rawModels) : null
+    } catch {
+      parsedModels = null
+    }
+    const safeModels = Array.isArray(parsedModels) ? parsedModels.map(makeModel) : null
+    if (safeModels?.length) {
+      if (safeModels.length === 1 && isLegacySeedModel(safeModels[0])) {
+        localStorage.removeItem('viper.models.v1')
+        localStorage.removeItem('viper.modelId.v1')
+        setModels([])
+        setModelId('')
+        return
+      }
+      setModels(safeModels)
+      const preferredId =
+        rawModelId && safeModels.some((m) => m.id === rawModelId) ? rawModelId : safeModels[0].id
+      setModelId(preferredId)
+      return
+    }
+    setModels([])
+    setModelId('')
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem('viper.models.v1', JSON.stringify(models))
+  }, [models])
+
+  useEffect(() => {
+    if (modelId) localStorage.setItem('viper.modelId.v1', modelId)
+    else localStorage.removeItem('viper.modelId.v1')
+  }, [modelId])
+
+  useEffect(() => {
+    if (models.length === 0) {
+      if (modelId) setModelId('')
+      return
+    }
+    if (modelId && models.some((m) => m.id === modelId)) return
+    setModelId(models[0].id)
+  }, [modelId, models])
+
+  const startNewChat = useCallback(() => {
+    const s = makeSession('New Chat')
+    setSessions((prev) => [s, ...prev])
+    setActiveSessionId(s.id)
+    setDraft('')
+  }, [])
+
+  // TODO: Fetch sessions from backend
+  useEffect(() => {
+    // api.getSessions().then(data => {
+    //   setSessions(data)
+    //   if (data.length > 0) setActiveSessionId(data[0].id)
+    //   else startNewChat()
+    // })
+    
+    // Temporary initialization for UI to work
+    if (sessions.length === 0) {
+      startNewChat()
+    }
+  }, [sessions.length, startNewChat])
 
   const activeSession = useMemo(
     () => sessions.find((s) => s.id === activeSessionId) || sessions[0],
@@ -141,25 +216,22 @@ export default function App() {
     return () => window.removeEventListener('pointerdown', onPointerDown)
   }, [modelMenuOpen])
 
+  useEffect(() => {
+    if (models.length === 0) setModelMenuOpen(false)
+  }, [models.length])
+
   // Close menus on Escape
   useEffect(() => {
     const onKeyDown = (e) => {
       if (e.key === 'Escape') {
         setModelMenuOpen(false)
         setSettingsOpen(false)
-        setAddModelOpen(false)
+        setModelEditorOpen(false)
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
-
-  const startNewChat = () => {
-    const s = makeSession('New Chat')
-    setSessions((prev) => [s, ...prev])
-    setActiveSessionId(s.id)
-    setDraft('')
-  }
 
   const deleteSession = (sessionId) => {
     setSessions((prev) => {
@@ -178,27 +250,56 @@ export default function App() {
   }
 
   const deleteModel = (id) => {
-    if (models.length <= 1) return // Prevent deleting last model
-    setModels(prev => prev.filter(m => m.id !== id))
-    if (modelId === id) {
-      setModelId(models[0].id)
-    }
+    setModels((prev) => prev.filter((m) => m.id !== id))
   }
 
-  const handleAddModel = () => {
-    if (!newModelName.trim()) return
-    const newModel = {
-      id: `custom-${Date.now()}`,
-      name: newModelName,
-      api: newModelApi // In a real app we'd store this securely
-    }
-    setModels(prev => [...prev, newModel])
-    setNewModelName('')
-    setNewModelApi('')
-    setAddModelOpen(false)
+  const openCreateModel = () => {
+    setEditingModelId(null)
+    setModelFormName('')
+    setModelFormProvider('')
+    setModelFormBaseUrl('')
+    setModelFormApiKey('')
+    setModelFormModel('')
+    setModelFormChatCompletionsPath('/v1/chat/completions')
+    setModelEditorOpen(true)
   }
 
-  const send = () => {
+  const openEditModel = (model) => {
+    setEditingModelId(model.id)
+    setModelFormName(model.name || '')
+    setModelFormProvider(model.provider || '')
+    setModelFormBaseUrl(model.baseUrl || '')
+    setModelFormApiKey(model.apiKey || '')
+    setModelFormModel(model.model || '')
+    setModelFormChatCompletionsPath(model.chatCompletionsPath || '/v1/chat/completions')
+    setModelEditorOpen(true)
+  }
+
+  const handleSaveModel = () => {
+    const name = `${modelFormName || ''}`.trim()
+    if (!name) return
+
+    const nextModel = makeModel({
+      id: editingModelId,
+      name,
+      provider: modelFormProvider,
+      baseUrl: modelFormBaseUrl,
+      apiKey: modelFormApiKey,
+      model: modelFormModel,
+      chatCompletionsPath: modelFormChatCompletionsPath,
+    })
+
+    setModels((prev) => {
+      if (editingModelId) return prev.map((m) => (m.id === editingModelId ? nextModel : m))
+      return [...prev, nextModel]
+    })
+    if (!editingModelId) setModelId(nextModel.id)
+
+    setModelEditorOpen(false)
+    setEditingModelId(null)
+  }
+
+  const send = async () => {
     const text = draft.trim()
     if (!text || sending || !activeSession) return
 
@@ -221,12 +322,6 @@ export default function App() {
       messages: [...s.messages, userMessage],
     }))
 
-    // Placeholder response text
-    const fullReply = `Received: "${text}"\n\n**Streaming Simulation**\n\nCurrently using model: **${
-      models.find((m) => m.id === modelId)?.name || modelId
-    }**.\n\nHere is a list of features implemented:\n- Markdown Rendering\n- Streaming effect\n- Settings Modal\n- English UI`
-    
-    // Initial assistant message placeholder
     const assistantMsgId = createId('m')
     updateSession(activeSession.id, (s) => ({
       ...s,
@@ -235,37 +330,118 @@ export default function App() {
         {
           id: assistantMsgId,
           role: 'assistant',
-          content: '', // Start empty
+          content: '',
           ts: Date.now(),
         },
       ],
     }))
+    
+    const selectedModel = models.find((m) => m.id === modelId)
+    if (!selectedModel) {
+      updateSession(activeSession.id, (s) => ({
+        ...s,
+        messages: s.messages.map((m) =>
+          m.id === assistantMsgId ? { ...m, content: '未选择模型，无法发送请求。' } : m,
+        ),
+      }))
+      setSending(false)
+      streamingRef.current = false
+      return
+    }
 
-    // Simulate streaming
-    let charIndex = 0
-    streamIntervalRef.current = setInterval(() => {
-      if (charIndex >= fullReply.length) {
-        clearInterval(streamIntervalRef.current)
-        setSending(false)
-        streamingRef.current = false
-        return
+    const baseUrl = normalizeBaseUrl(selectedModel.baseUrl)
+    if (!baseUrl) {
+      updateSession(activeSession.id, (s) => ({
+        ...s,
+        messages: s.messages.map((m) =>
+          m.id === assistantMsgId ? { ...m, content: 'Base URL 为空，请先在 Settings 里配置模型。' } : m,
+        ),
+      }))
+      setSending(false)
+      streamingRef.current = false
+      return
+    }
+    const chatPath = `${selectedModel.chatCompletionsPath || '/v1/chat/completions'}`.startsWith('/')
+      ? selectedModel.chatCompletionsPath
+      : `/${selectedModel.chatCompletionsPath}`
+    const url = `${baseUrl}${chatPath}`
+
+    const outgoingMessages = [...activeSession.messages, userMessage].map((m) => ({
+      role: m.role,
+      content: m.content,
+    }))
+
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(selectedModel.apiKey
+            ? { Authorization: `Bearer ${selectedModel.apiKey}` }
+            : {}),
+        },
+        body: JSON.stringify({
+          model: selectedModel.model,
+          messages: outgoingMessages,
+          stream: true,
+        }),
+      })
+
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '')
+        throw new Error(`${resp.status} ${resp.statusText}${text ? `\n${text}` : ''}`)
       }
 
-      const nextChunk = fullReply.slice(0, charIndex + 5) // Append 5 chars at a time
-      charIndex += 5
+      if (!resp.body) throw new Error('Response body is empty')
 
-      // Update the last message content
-      setSessions(prev => prev.map(s => {
-        if (s.id !== activeSession.id) return s
-        const msgs = [...s.messages]
-        const lastMsg = msgs[msgs.length - 1]
-        if (lastMsg.id === assistantMsgId) {
-          lastMsg.content = nextChunk
+      const reader = resp.body.getReader()
+      const decoder = new TextDecoder('utf-8')
+      let buffer = ''
+
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+        for (const rawLine of lines) {
+          const line = rawLine.trim()
+          if (!line) continue
+          if (!line.startsWith('data:')) continue
+          const dataStr = line.replace(/^data:\s*/, '')
+          if (dataStr === '[DONE]') {
+            buffer = ''
+            break
+          }
+          let event = null
+          try {
+            event = JSON.parse(dataStr)
+          } catch {
+            continue
+          }
+          const choice0 = event?.choices?.[0]
+          const piece = choice0?.delta?.content
+          if (!piece) continue
+          updateSession(activeSession.id, (s) => ({
+            ...s,
+            messages: s.messages.map((m) =>
+              m.id === assistantMsgId ? { ...m, content: `${m.content || ''}${piece}` } : m,
+            ),
+          }))
         }
-        return { ...s, messages: msgs }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : `${err}`
+      updateSession(activeSession.id, (s) => ({
+        ...s,
+        messages: s.messages.map((m) =>
+          m.id === assistantMsgId ? { ...m, content: `请求失败：${msg}` } : m,
+        ),
       }))
-
-    }, 30) // Speed of typing
+    } finally {
+      setSending(false)
+      streamingRef.current = false
+    }
   }
 
   const onSubmit = (e) => {
@@ -273,7 +449,9 @@ export default function App() {
     send()
   }
 
-  const currentModelName = models.find((m) => m.id === modelId)?.name || modelId
+  const hasModels = models.length > 0
+  const currentModelName =
+    models.find((m) => m.id === modelId)?.name || (hasModels ? modelId : 'Select Model')
   const hasMessages = activeSession?.messages?.length > 0
 
   return (
@@ -302,24 +480,30 @@ export default function App() {
           <button
             type="button"
             className={`modelButton ${modelMenuOpen ? 'is-open' : ''}`}
-            onClick={() => setModelMenuOpen((v) => !v)}
-            aria-haspopup="listbox"
-            aria-expanded={modelMenuOpen}
+            onClick={() => {
+              if (!hasModels) return
+              setModelMenuOpen((v) => !v)
+            }}
+            aria-haspopup={hasModels ? 'listbox' : undefined}
+            aria-expanded={hasModels ? modelMenuOpen : undefined}
+            disabled={!hasModels}
           >
             {/* Removed label as requested */}
             <span className="modelValue" style={{ margin: '0 auto' }}>{currentModelName}</span>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="chev">
-              <path
-                d="M7 10l5 5 5-5"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+            {hasModels ? (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="chev">
+                <path
+                  d="M7 10l5 5 5-5"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            ) : null}
           </button>
 
-          {modelMenuOpen ? (
+          {hasModels && modelMenuOpen ? (
             <div className="modelMenu" role="listbox" aria-label="Select Model">
               {models.map((m) => (
                 <button
@@ -499,7 +683,7 @@ export default function App() {
             </div>
             
             <div className="modalBody">
-              <button className="modalBtn primary centered-btn" onClick={() => setAddModelOpen(true)} style={{marginBottom: '16px'}}>
+              <button className="modalBtn primary centered-btn" onClick={openCreateModel} style={{marginBottom: '16px'}}>
                 Add New Model
               </button>
               
@@ -531,7 +715,7 @@ export default function App() {
           onClick={e => e.stopPropagation()}
         >
            <div className="contextMenuItem" onClick={() => {
-             console.log('Edit', contextMenu.model.id)
+             openEditModel(contextMenu.model)
              setContextMenu(null)
            }}>
              Edit
@@ -545,36 +729,72 @@ export default function App() {
         </div>
       )}
 
-      {/* Add Model Modal (Nested) */}
-      {addModelOpen && (
-        <div className="modalOverlay" onClick={() => setAddModelOpen(false)}>
+      {modelEditorOpen && (
+        <div className="modalOverlay" onClick={() => setModelEditorOpen(false)}>
           <div className="modalContent" onClick={e => e.stopPropagation()}>
-            <h2 className="modalTitle">Add New Model</h2>
+            <h2 className="modalTitle">{editingModelId ? 'Edit Model' : 'Add New Model'}</h2>
             
             <div className="modalBody">
               <div>
                 <label className="label">Model Name</label>
-                <input 
+                <input
                   className="inputField" 
-                  value={newModelName}
-                  onChange={e => setNewModelName(e.target.value)}
-                  placeholder="e.g. Llama 3 Local"
+                  value={modelFormName}
+                  onChange={e => setModelFormName(e.target.value)}
+                  placeholder="Model Name"
                 />
               </div>
               <div>
-                <label className="label">API Endpoint / Key</label>
-                <input 
+                <label className="label">Provider</label>
+                <input
+                  className="inputField"
+                  value={modelFormProvider}
+                  onChange={(e) => setModelFormProvider(e.target.value)}
+                  placeholder="provider"
+                />
+              </div>
+              <div>
+                <label className="label">Base URL</label>
+                <input
                   className="inputField" 
-                  value={newModelApi}
-                  onChange={e => setNewModelApi(e.target.value)}
-                  placeholder="Enter API configuration..."
+                  value={modelFormBaseUrl}
+                  onChange={e => setModelFormBaseUrl(e.target.value)}
+                  placeholder="https://api.host"
+                />
+              </div>
+              <div>
+                <label className="label">API Key</label>
+                <input
+                  className="inputField"
+                  type="password"
+                  value={modelFormApiKey}
+                  onChange={e => setModelFormApiKey(e.target.value)}
+                  placeholder="sk-..."
+                />
+              </div>
+              <div>
+                <label className="label">Model</label>
+                <input
+                  className="inputField"
+                  value={modelFormModel}
+                  onChange={e => setModelFormModel(e.target.value)}
+                  placeholder="model"
+                />
+              </div>
+              <div>
+                <label className="label">Chat Completions Path</label>
+                <input
+                  className="inputField"
+                  value={modelFormChatCompletionsPath}
+                  onChange={e => setModelFormChatCompletionsPath(e.target.value)}
+                  placeholder="/v1/chat/completions"
                 />
               </div>
             </div>
 
             <div className="modalFooter">
-              <button className="modalBtn" onClick={() => setAddModelOpen(false)}>Cancel</button>
-              <button className="modalBtn primary" onClick={handleAddModel}>Save</button>
+              <button className="modalBtn" onClick={() => setModelEditorOpen(false)}>Cancel</button>
+              <button className="modalBtn primary" onClick={handleSaveModel}>Save</button>
             </div>
           </div>
         </div>
