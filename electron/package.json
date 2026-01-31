@@ -1,0 +1,46 @@
+{
+  "name": "viper-electron",
+  "private": true,
+  "version": "0.0.0",
+  "type": "commonjs",
+  "main": "main.js",
+  "scripts": {
+    "dev": "concurrently -k -n \"vite,electron\" -c \"cyan,green\" \"npm --prefix ../frontend run dev -- --host 127.0.0.1 --port 5173\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "build:renderer": "npm --prefix ../frontend run build",
+    "dist": "npm run build:renderer && electron-builder"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "electron": "^40.1.0",
+    "electron-builder": "^26.6.0",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.viper.app",
+    "productName": "Viper",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../frontend/dist",
+        "to": "renderer"
+      },
+      {
+        "from": "../backend/dist",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  }
+}

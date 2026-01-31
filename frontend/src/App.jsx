@@ -49,7 +49,10 @@ function makeModel(values) {
 
 export default function App() {
   const backendUrl = useMemo(
-    () => normalizeBaseUrl(import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8000'),
+    () =>
+      normalizeBaseUrl(
+        globalThis?.VIPER?.backendUrl || import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8000',
+      ),
     [],
   )
 
@@ -660,7 +663,9 @@ export default function App() {
     models.find((m) => m.id === modelId)?.name || (hasModels ? modelId : 'Select Model')
 
   return (
-    <div className={`app ${hasMessages ? 'has-messages' : 'is-empty'}`}>
+    <div className="electronRoot">
+      <div className="electronTitlebar" />
+      <div className={`app ${hasMessages ? 'has-messages' : 'is-empty'}`}>
       <aside className="sidebar">
         <div className="brandRow">
           <div className="brandText">
@@ -1091,6 +1096,7 @@ export default function App() {
           </div>
         </div>
       )}
+      </div>
     </div>
   )
 }
