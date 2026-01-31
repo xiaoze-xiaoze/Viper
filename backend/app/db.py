@@ -1,16 +1,29 @@
 import json
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
 
-DB_PATH = Path(__file__).resolve().parent.parent / "viper.sqlite3"
+def _default_db_path() -> Path:
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        if base:
+            return Path(base) / "Viper" / "viper.sqlite3"
+        return Path.home() / "AppData" / "Local" / "Viper" / "viper.sqlite3"
+    base = os.environ.get("XDG_DATA_HOME")
+    if base:
+        return Path(base) / "viper" / "viper.sqlite3"
+    return Path.home() / ".local" / "share" / "viper" / "viper.sqlite3"
+
+DB_PATH = Path(os.environ.get("VIPER_DB_PATH") or _default_db_path())
 
 def utc_now_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 def get_connection() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")

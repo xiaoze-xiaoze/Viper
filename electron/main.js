@@ -73,6 +73,9 @@ function resolveBundledBackendExecutable() {
 function startBackend({ port }) {
   const host = '127.0.0.1'
   const baseUrl = `http://${host}:${port}`
+  const dbFileName = isDev() ? 'viper-dev.sqlite3' : 'viper.sqlite3'
+  const dbPath = path.join(app.getPath('userData'), dbFileName)
+  const childEnv = { ...process.env, VIPER_DB_PATH: dbPath }
 
   if (app.isPackaged) {
     const exePath = resolveBundledBackendExecutable()
@@ -82,6 +85,7 @@ function startBackend({ port }) {
     const child = spawn(exePath, ['--host', host, '--port', String(port)], {
       windowsHide: true,
       stdio: 'ignore',
+      env: childEnv,
     })
     return { child, baseUrl }
   }
@@ -90,7 +94,7 @@ function startBackend({ port }) {
   const child = spawn(
     python,
     ['-m', 'uvicorn', 'backend.app.main:app', '--host', host, '--port', String(port)],
-    { cwd: path.resolve(__dirname, '..'), windowsHide: true },
+    { cwd: path.resolve(__dirname, '..'), windowsHide: true, env: childEnv },
   )
   child.stdout?.on('data', () => {})
   child.stderr?.on('data', () => {})
