@@ -6,13 +6,15 @@ conda activate viper
 ```
 
 打包
-```powershell
-Set-Location C:\code\Viper
-pyinstaller -y backend\pyinstaller.spec --distpath backend\dist --workpath backend\build\pyinstaller
+```
+pyinstaller -y backend/pyinstaller.spec --distpath backend/dist --workpath backend/build/pyinstaller
 ```
 
 测试
-```powershell
-Set-Location C:\code\Viper
-.\backend\dist\viper-backend.exe --host 127.0.0.1 --port 8000
+```
+# windows
+./backend/dist/viper-backend.exe --host 127.0.0.1 --port 8000
+
+# linux
+./backend/dist/viper-backend --host 127.0.0.1 --port 8000
 ```
