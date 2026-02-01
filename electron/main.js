@@ -66,7 +66,21 @@ async function waitForHealth(baseUrl, timeoutMs = 15_000) {
 
 function resolveBundledBackendExecutable() {
   const resources = process.resourcesPath
-  const exePath = path.join(resources, 'backend', 'viper-backend.exe')
+  const isWin = process.platform === 'win32'
+  const exeName = isWin ? 'viper-backend.exe' : 'viper-backend'
+  const exePath = path.join(resources, 'backend', exeName)
+  console.log('Platform:', process.platform)
+  console.log('Looking for backend at:', exePath)
+  console.log('Resources path:', resources)
+  const backendDir = path.join(resources, 'backend')
+  if (fs.existsSync(backendDir)) {
+    console.log('Backend dir contents:', fs.readdirSync(backendDir))
+  } else {
+    console.log('Backend dir not found at:', backendDir)
+    if (fs.existsSync(resources)) {
+      console.log('Resources dir contents:', fs.readdirSync(resources))
+    }
+  }
   return exePath
 }
 
